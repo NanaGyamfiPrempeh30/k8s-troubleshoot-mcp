@@ -3,7 +3,7 @@
 **Format:** EARS (Easy Approach to Requirements Syntax)  
 **Status:** v1.0 — approved for Kiro code generation  
 **Author:** Yaw Nana Gyamfi Prempeh  
-**Reviewed by:** Wilson Mar  
+**Pending review:** Wilson Mar  
 
 ---
 
