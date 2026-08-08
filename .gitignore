@@ -1,0 +1,78 @@
+# NOTE: patterns must start at column 0. Git strips trailing whitespace from a
+# pattern but treats leading whitespace as part of it, so an indented rule like
+# "    .venv/" silently matches nothing.
+
+# Virtualenvs
+.venv/
+venv/
+env/
+.python-version
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+
+# Packaging / build
+build/
+dist/
+sdist/
+wheels/
+*.egg
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Tests, coverage, hypothesis
+.pytest_cache/
+.hypothesis/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+junit*.xml
+
+# Type checkers / linters
+.mypy_cache/
+.dmypy.json
+.pyre/
+.pytype/
+.ruff_cache/
+
+# Credentials — never commit
+# scripts/generate-kubeconfig.sh emits a kubeconfig containing a service
+# account token; these rules are the last line of defence against committing it.
+kubeconfig
+*.kubeconfig
+kubeconfig*.yaml
+kubeconfig*.yml
+.kube/
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+.env
+.env.*
+!.env.example
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local agent/tool state
+.claude/settings.local.json
+
+# Patch / merge artifacts
+*.orig
+*.rej
+*.bak

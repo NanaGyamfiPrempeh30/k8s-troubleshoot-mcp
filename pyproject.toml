@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "k8s-troubleshoot-mcp"
+version = "1.0.0"
+description = "Read-only MCP server for Kubernetes cluster diagnostics"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+authors = [
+    { name = "Yaw Nana Gyamfi Prempeh" }
+]
+dependencies = [
+    "mcp[cli]>=1.2.0,<2.0.0",
+    "kubernetes>=29.0.0",
+    "httpx>=0.27.0",
+]
+
+[project.scripts]
+k8s-troubleshoot-mcp = "k8s_troubleshoot_mcp.__main__:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-mock>=3.12.0",
+    "pytest-cov>=4.1.0",
+    "hypothesis>=6.100.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/k8s_troubleshoot_mcp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
