@@ -14,7 +14,7 @@ from unittest import mock
 from hypothesis import given, settings, strategies as st
 
 from k8s_troubleshoot_mcp.tools.pods import get_pod_logs
-from tests.property.strategies import FakeClients, make_config
+from tests.property.strategies import FakeClients, make_config, pod_log_response
 
 # REQ-071: max_log_lines defaults to 200 with a hard ceiling of 1000.
 max_log_lines_values = st.integers(min_value=1, max_value=1000)
@@ -25,7 +25,7 @@ def _clients_returning_requested_lines():
 
     def _side_effect(**kwargs):
         count = kwargs["tail_lines"]
-        return "".join(f"log line {i}\n" for i in range(count))
+        return pod_log_response("".join(f"log line {i}\n" for i in range(count)))
 
     core = mock.MagicMock()
     core.read_namespaced_pod_log.side_effect = _side_effect

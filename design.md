@@ -355,6 +355,35 @@ Both event tools use `EventsV1Api` (events.k8s.io/v1), never `CoreV1Api`:
 }
 ```
 
+**`content` is a representation of the log, not the log.** It is escaped once by
+`serialize_log_content` before the envelope is JSON-encoded, so it survives
+transport still escaped. A client that calls `json.loads` on the MCP response
+undoes the *transport* layer only and gets back a string in which a newline is
+still the two characters `\` and `n`, a quote is still `\"`, and `<` is still
+the six characters `\u003c`. There is no real newline anywhere in it.
+
+Concretely, for a container that wrote `line one\nline two\n`:
+
+| stage | value |
+|-------|-------|
+| container output | `line one` ⏎ `line two` ⏎ |
+| `content` in the response dict | `line one\nline two\n` (as literal characters) |
+| on the wire | `"content": "line one\\nline two\\n"` |
+| after the client's `json.loads` | `line one\nline two\n` (as literal characters) |
+
+Recovering the original text requires a **second** decode of the field itself:
+`json.loads('"' + content + '"')`. This is deliberate. The escaping is the
+structural prompt-injection mitigation (REQ-020, REQ-027); if one decode restored
+real control characters and a raw `<`, the mitigation would be gone before the
+model ever saw the content. A consumer that wants human-readable text is opting
+out of that mitigation and should do so knowingly.
+
+This is also why `lines_returned` is a separate field rather than something the
+client derives: splitting `content` on a newline yields 1 regardless of the log's
+real length, because `content` contains no newlines. Any consumer computing a
+line count from `content` is computing the wrong number — the same wrong number
+the `str(bytes)` defect produced (Property 18 / "faithful-looking corruption").
+
 #### `get_pod_events` data
 ```json
 {
@@ -398,7 +427,7 @@ Both event tools use `EventsV1Api` (events.k8s.io/v1), never `CoreV1Api`:
 ```json
 {
   "name": "string", "namespace": "string",
-  "desired_replicas": 3, "ready_replicas": 3,
+  "desired_replicas": "3|null", "ready_replicas": 3,
   "available_replicas": 3, "updated_replicas": 3,
   "conditions": [{"type": "Available", "status": "True", "reason": "string", "message": "string"}],
   "rollout_strategy": "RollingUpdate",
@@ -421,7 +450,7 @@ Both event tools use `EventsV1Api` (events.k8s.io/v1), never `CoreV1Api`:
 ```json
 {
   "name": "string", "namespace": "string",
-  "type": "ClusterIP", "cluster_ip": "string",
+  "type": "ClusterIP|null", "cluster_ip": "string|null",
   "external_ips": ["string"],
   "ports": [{"port": 80, "target_port": 8080, "protocol": "TCP", "node_port": null}],
   "selector": {"app": "string"},
@@ -433,12 +462,15 @@ Both event tools use `EventsV1Api` (events.k8s.io/v1), never `CoreV1Api`:
 `ready_endpoints` and `truncated` are both `null` when the Endpoints object
 cannot be read (REQ-047a) — an unknown must not be reported as a known zero.
 
+`type` and `cluster_ip` are annotated `|null` under the unreachable-but-possible
+rule below, not because a real Service omits them.
+
 #### `get_hpa_status` data
 ```json
 {
   "name": "string", "namespace": "string",
   "current_replicas": 2, "desired_replicas": 3,
-  "min_replicas": 1, "max_replicas": 10,
+  "min_replicas": "1|null", "max_replicas": 10,
   "metrics": [{"type": "Resource", "name": "cpu", "current_value": "80%", "target_value": "70%"}],
   "conditions": [{"type": "AbleToScale", "status": "True", "reason": "string", "message": "string"}],
   "last_scale_time": "ISO8601|null"
@@ -452,6 +484,52 @@ on a metrics failure the HPA controller embeds the metrics adapter's error text
 verbatim, and that adapter is frequently a third-party component. `reason` stays
 unescaped on the same terms as pod/node/deployment conditions, because HPA
 reasons are authored by kube-controller-manager from a fixed vocabulary.
+
+`current_replicas` is **not** nullable. `status.currentReplicas` is optional in
+the v2 schema, but the tool reports `0` for both "no status yet" and "status
+present, field absent" — those are the same fact and previously got two
+different answers. `status.desiredReplicas` is required by the schema and needs
+no such handling.
+
+#### Unreachable-but-possible nulls
+
+Four fields are annotated `|null` above — `get_deployment_status.desired_replicas`,
+`get_service.type`, `get_service.cluster_ip`, and `get_hpa_status.min_replicas` —
+on a narrower basis than the other nullable fields in this document.
+
+Each is optional in the OpenAPI schema, so the Python client can present it as
+`None`, and the tools pass it through. But each is also **defaulted by the API
+server on write**, verified with `kubectl create --dry-run=server` against a
+v1.35.1 API server, which runs defaulting and admission without persisting:
+
+| field | server-supplied default |
+|-------|-------------------------|
+| `Deployment.spec.replicas` | `1` |
+| `Service.spec.type` | `ClusterIP` |
+| `Service.spec.clusterIP` | allocated from the service CIDR |
+| `HorizontalPodAutoscaler.spec.minReplicas` | `1` |
+
+So on a conformant cluster these nulls do not occur. The annotation records that
+the *type contract* permits them, not that the cluster produces them. This
+matters for two reasons: a client must not assume the field is always an integer
+or a string, and a future change that starts relying on the value being present
+is relying on defaulting behavior, which is a server-version-dependent
+assumption rather than a schema guarantee.
+
+The code is deliberately unchanged for these four. Normalizing them would mean
+asserting the API's defaults inside the tool, which duplicates a guarantee the
+server already provides and would silently diverge if that guarantee ever
+changed. This is the opposite call from `unschedulable` in `list_nodes`, where
+the absent state is not merely possible but is what the API sends for *every*
+schedulable node, and from `current_replicas` above, where the tool contradicted
+itself. Existing tests that assert `None` for these fields are correct as written.
+
+**Gap:** `get_statefulset_status.replicas` has the same property
+(`StatefulSet.spec.replicas` defaults to `1`) but cannot be annotated here —
+this document has no data model for `get_statefulset_status`, `list_deployments`,
+`get_daemonset_status`, `get_namespace_events`, `list_namespaces` or
+`list_nodes`. Those models should be added, at which point the same annotation
+applies.
 
 #### `get_pvc_status` data
 ```json
@@ -733,6 +811,53 @@ REQ-030a, REQ-035a, REQ-051a, REQ-051b)**
 
 ---
 
+### Property 18: Optional-field omission safety
+
+*For any* tool and *for any* Kubernetes object in which every non-required field
+has been omitted, the tool must return a valid, JSON-serializable response
+envelope on its success path rather than raising.
+
+Kubernetes omits unset optional fields from its JSON, so the client leaves them
+`None`. Hand-written mocks do the opposite — they populate whatever the author
+thought of. Both bugs found by real-cluster validation came from that mismatch:
+`list_nodes` returned `"unschedulable": null` because the API omits the field on
+every schedulable node, and `list_pods` raised `AttributeError` on
+`pod.metadata.name` because `metadata` is optional in the model.
+
+Required-ness is read from the generated setter rather than from documentation:
+`kubernetes-client` emits a ``must not be `None` `` guard for required properties
+only. The fakes are then generated from each model's `openapi_types`, the same
+schema-driven approach as Property 17, so a field nobody remembered to mock is
+still exercised.
+
+Two input shapes are generated, and both are necessary:
+
+- **SPARSE** — every optional field is `None`, including nested objects. This is
+  a freshly created or partially reconciled object.
+- **DEEP** — every nested object is built, but every optional *scalar* is `None`.
+
+SPARSE cannot reach inner scalars, because a `None` parent hides its children
+behind whatever fallback the tool applies to the parent. Probing `get_hpa_status`
+with SPARSE reported 2 nulls; DEEP reported 7. One of the 7 was
+`current_replicas`, which defaulted to `0` when `status` was absent but passed
+`None` through when only the field was absent — a defect SPARSE could not see and
+DEEP found on its first run (since fixed). The test asserts the two shapes
+differ, so neither can silently collapse into the other.
+
+**Deliberately out of scope.** This property does not assert that any given
+response field is *non-null*. Which fields may legitimately be null is a
+per-field contract question — design.md marks nullable fields as `"X|null"` —
+and encoding it requires a per-field allowlist in the shape of Property 17's.
+Property 18 covers crash-safety only; a null that is off-contract but harmless
+passes.
+
+**Validates: Requirements 5.1 (REQ-015, REQ-016) and REQ-017's final clause —
+tools SHALL NOT propagate unhandled exceptions to the MCP layer. REQ-017 names
+`ApiException` as the source; this property covers the other one, a well-formed
+API response whose optional fields are absent.**
+
+---
+
 ## Error Handling
 
 ### Startup errors (fatal)
@@ -905,7 +1030,7 @@ Two complementary test layers are required:
 
 1. **Unit / example-based tests** — verify specific behaviors, error paths, and
    edge cases using mocked Kubernetes clients.
-2. **Property-based tests** — verify universal correctness properties (P1–P17
+2. **Property-based tests** — verify universal correctness properties (P1–P18
    above) across many generated inputs using `hypothesis`.
 
 ### Property-based testing library

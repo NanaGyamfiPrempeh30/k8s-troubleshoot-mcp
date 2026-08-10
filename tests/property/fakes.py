@@ -52,6 +52,15 @@ def build_poisoned(type_str: str, poison: str, depth: int = 0) -> Any:
 
     if type_str == "str":
         return poison
+    if type_str == "urllib3_response(bytes)":
+        # Not an openapi_types string. read_namespaced_pod_log is called with
+        # _preload_content=False, so the client returns the raw urllib3 response
+        # with a bytes body rather than a deserialized str. Poisoning the
+        # decoded-text layer only would test a shape the real client never
+        # returns — the bytes-repr bug is exactly what that blind spot allowed.
+        response = FakeModel()
+        response.data = poison.encode("utf-8")
+        return response
     if type_str == "int":
         return 1
     if type_str == "float":

@@ -417,3 +417,75 @@ class TestGetHpaStatus:
 
         assert result["status"] == "error"
         assert result["error"] == "connection_error"
+
+
+class TestCurrentReplicasIsAlwaysAnInteger:
+    """current_replicas is optional in the v2 schema; design.md types it as int.
+
+    The tool had two answers to the same question: `status.current_replicas if
+    status else 0` returned 0 when the whole status object was absent, but
+    passed None through when only the field was absent. Found by the Property 18
+    DEEP probe, which builds the status object and omits only the scalars —
+    the SPARSE shape could not reach it, because a None status hit the fallback.
+
+    Distinct from min_replicas, which is left as-is: absent minReplicas is
+    unreachable on a conformant cluster (the API server defaults it to 1) and
+    design.md now documents it as "1|null".
+    """
+
+    def test_absent_field_with_present_status_is_zero(self, config, mock_clients):
+        """The case that produced null."""
+        hpa = make_hpa()
+        hpa.status.current_replicas = None
+        mock_clients.autoscaling_v2.read_namespaced_horizontal_pod_autoscaler.return_value = hpa
+
+        result = get_hpa_status(mock_clients, config, "web-hpa", "default")
+
+        assert result["data"]["current_replicas"] == 0
+        assert result["data"]["current_replicas"] is not None
+
+    def test_absent_status_is_also_zero(self, config, mock_clients):
+        """The pre-existing fallback branch, unchanged — the two must agree."""
+        hpa = make_hpa()
+        hpa.status = None
+        mock_clients.autoscaling_v2.read_namespaced_horizontal_pod_autoscaler.return_value = hpa
+
+        result = get_hpa_status(mock_clients, config, "web-hpa", "default")
+
+        assert result["data"]["current_replicas"] == 0
+
+    def test_both_absence_shapes_agree(self, config, mock_clients):
+        """The defect was disagreement between these two, not either value."""
+        no_status = make_hpa()
+        no_status.status = None
+        no_field = make_hpa()
+        no_field.status.current_replicas = None
+
+        results = []
+        for hpa in (no_status, no_field):
+            mock_clients.autoscaling_v2.read_namespaced_horizontal_pod_autoscaler.return_value = hpa
+            results.append(
+                get_hpa_status(mock_clients, config, "web-hpa", "default")["data"][
+                    "current_replicas"
+                ]
+            )
+
+        assert results[0] == results[1] == 0
+
+    def test_real_value_is_not_flattened(self, config, mock_clients):
+        """Defaulting to 0 must not swallow an actual count."""
+        hpa = make_hpa(current_replicas=7)
+        mock_clients.autoscaling_v2.read_namespaced_horizontal_pod_autoscaler.return_value = hpa
+
+        result = get_hpa_status(mock_clients, config, "web-hpa", "default")
+
+        assert result["data"]["current_replicas"] == 7
+
+    def test_genuine_zero_is_preserved(self, config, mock_clients):
+        """A scaled-to-zero HPA reports 0, indistinguishable from absent by design."""
+        hpa = make_hpa(current_replicas=0)
+        mock_clients.autoscaling_v2.read_namespaced_horizontal_pod_autoscaler.return_value = hpa
+
+        result = get_hpa_status(mock_clients, config, "web-hpa", "default")
+
+        assert result["data"]["current_replicas"] == 0

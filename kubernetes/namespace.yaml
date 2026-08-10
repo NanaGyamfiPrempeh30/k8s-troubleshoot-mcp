@@ -1,0 +1,16 @@
+# REQ-011: dedicated namespace holding only the server's ServiceAccount.
+#
+# This namespace exists to isolate the identity, not to host workloads. The
+# server runs outside the cluster and authenticates with a kubeconfig generated
+# by scripts/generate-kubeconfig.sh (REQ-014); nothing is scheduled here.
+#
+# Note that `k8s-mcp` is not itself readable by the server unless it is listed
+# in ALLOWED_NAMESPACES and bound with a RoleBinding. Holding the identity in a
+# namespace grants no access to that namespace.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: k8s-mcp
+  labels:
+    app.kubernetes.io/name: k8s-troubleshoot-mcp
+    app.kubernetes.io/component: rbac

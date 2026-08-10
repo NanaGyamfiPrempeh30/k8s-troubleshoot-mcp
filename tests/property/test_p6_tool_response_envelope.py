@@ -26,6 +26,7 @@ from tests.property.strategies import (
     assert_envelope,
     forbidden_clients,
     http_status_codes,
+    pod_log_response,
     make_config,
     namespace_names,
     namespace_sets,
@@ -99,7 +100,7 @@ def test_property_6_connection_error_envelope(tool_index, message):
 def test_property_6_get_pod_logs_success_envelope(content):
     """Arbitrary log payloads still serialize inside a success envelope."""
     core = mock.MagicMock()
-    core.read_namespaced_pod_log.return_value = content
+    core.read_namespaced_pod_log.return_value = pod_log_response(content)
     clients = FakeClients(core, mock.MagicMock(), mock.MagicMock(), mock.MagicMock())
 
     response = get_pod_logs(clients, make_config(), "pod", "default")

@@ -44,10 +44,13 @@ def _validate_kubeconfig() -> str:
     # REQ-001: KUBECONFIG must be set and non-empty
     if not kubeconfig:
         _fatal(
-            "KUBECONFIG environment variable is not set. Provision the service account "
-            "using 'kubectl apply -f kubernetes/' and generate its kubeconfig using "
-            "'scripts/generate-kubeconfig.sh'. Then set "
-            "KUBECONFIG=/path/to/generated-kubeconfig.yaml before starting the server."
+            "KUBECONFIG environment variable is not set. Run "
+            "'scripts/generate-kubeconfig.sh <output-path> <namespace> [namespace...]' to "
+            "provision the service account and generate its kubeconfig. Do not apply "
+            "kubernetes/ manually: role.yaml is namespaced and rolebinding.yaml.template "
+            "requires substitution, so a blanket 'kubectl apply -f kubernetes/' reports "
+            "success while leaving the server unable to read anything. Then set "
+            "KUBECONFIG=<output-path> before starting the server."
         )
 
     # REQ-002: File must exist and be readable

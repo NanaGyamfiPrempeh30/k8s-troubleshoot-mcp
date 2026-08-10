@@ -1,0 +1,29 @@
+# REQ-011: binds the server's ServiceAccount to the cluster-scoped ClusterRole.
+#
+# This is the only cluster-wide grant the server holds. It confers exactly what
+# clusterrole.yaml lists — get/list/watch on nodes and namespaces (REQ-012) —
+# and nothing namespaced. All namespaced access comes from role.yaml plus a
+# per-namespace RoleBinding rendered from rolebinding.yaml.template.
+#
+# Applying this file does NOT make any namespace readable. In particular it does
+# not grant access to kube-system or kube-public: `list_namespaces` can see that
+# those namespaces exist, but REQ-008 strips them from ALLOWED_NAMESPACES at
+# startup and REQ-072 filters them out of the response, and no RoleBinding
+# exists there to read anything inside them.
+#
+# Apply after namespace.yaml, serviceaccount.yaml and clusterrole.yaml.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: k8s-mcp-readonly
+  labels:
+    app.kubernetes.io/name: k8s-troubleshoot-mcp
+    app.kubernetes.io/component: rbac
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: k8s-mcp-readonly
+subjects:
+  - kind: ServiceAccount
+    name: k8s-mcp-server
+    namespace: k8s-mcp

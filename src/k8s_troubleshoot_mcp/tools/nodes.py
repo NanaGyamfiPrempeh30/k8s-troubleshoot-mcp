@@ -45,6 +45,23 @@ def _age_seconds(creation_timestamp: datetime | None) -> int:
     return int((now - creation_timestamp).total_seconds())
 
 
+def _is_unschedulable(node: Any) -> bool:
+    """Whether a node is cordoned, as a real boolean.
+
+    REQ-035/REQ-038 specify a boolean. `spec.unschedulable` is declared bool in
+    openapi_types but is **omitted** by the API server when false, so the client
+    leaves it None on every schedulable node — which serialized as
+    `"unschedulable": null`, off-contract, on a real cluster.
+
+    Absent means schedulable, so None collapses to False. That is the opposite
+    of the storage_class_name treatment in storage.py, where None and "" are
+    distinct states and must both survive; here there is no third state to lose.
+    """
+    if node.spec is None:
+        return False
+    return bool(node.spec.unschedulable)
+
+
 def _extract_node_roles(labels: dict[str, str] | None) -> list[str]:
     """Extract node roles from labels.
 
@@ -179,7 +196,7 @@ def get_node_status(
         "capacity": capacity,
         "allocatable": allocatable,
         "taints": taints,
-        "unschedulable": node.spec.unschedulable if node.spec else False,
+        "unschedulable": _is_unschedulable(node),
         "roles": roles,
         "kubelet_version": kubelet_version,
     }
@@ -244,7 +261,7 @@ def list_nodes(
                 node.metadata.creation_timestamp if node.metadata else None
             ),
             "kubelet_version": kubelet_version,
-            "unschedulable": node.spec.unschedulable if node.spec else False,
+            "unschedulable": _is_unschedulable(node),
         })
 
     data = {

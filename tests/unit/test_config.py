@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import io
 import os
+import re
 import tempfile
+from pathlib import Path
 from unittest import mock
 
 import pytest
@@ -17,6 +20,8 @@ from k8s_troubleshoot_mcp.config import (
     _validate_api_timeout,
     _validate_max_log_lines,
 )
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 class TestValidateKubeconfig:
@@ -296,3 +301,58 @@ class TestValidateEnv:
                     config.kubeconfig_path = "/other/path"
         finally:
             os.unlink(path)
+
+
+class TestReq001MessageMatchesSpec:
+    """REQ-001 specifies exact stderr text; nothing verified it until now.
+
+    That gap is why the message survived telling operators to run
+    `kubectl apply -f kubernetes/` — which, verified against a v1.35.1 API
+    server with --dry-run=server, reports success while creating role.yaml in
+    the wrong namespace and never reading rolebinding.yaml.template at all
+    (kubectl reads only .yaml/.yml/.json from a directory). The spec text and
+    the emitted text could drift freely.
+
+    Compared against requirements.md itself rather than a second hand-typed
+    copy, mirroring test_server.py's REQ-063 check.
+    """
+
+    @staticmethod
+    def _emitted_message() -> str:
+        with mock.patch.dict(os.environ, {}, clear=True):
+            with mock.patch("sys.stderr", new_callable=io.StringIO) as err:
+                with pytest.raises(SystemExit):
+                    _validate_kubeconfig()
+        return err.getvalue()
+
+    @staticmethod
+    def _spec_message() -> str:
+        spec_text = (REPO_ROOT / "requirements.md").read_text(encoding="utf-8")
+        # [^\n] rather than . so the capture cannot run past the blockquote.
+        block = re.search(r"\*\*REQ-001:\*\*[\s\S]*?\n\n((?:>[^\n]*\n)+)", spec_text)
+        assert block, "REQ-001 blockquote not found in requirements.md"
+        quoted = " ".join(
+            line.lstrip("> ").strip() for line in block.group(1).splitlines()
+        )
+        return re.sub(r"\s+", " ", quoted.strip().strip("`").strip('"')).strip()
+
+    def test_emitted_message_matches_requirements_verbatim(self):
+        actual = re.sub(r"\s+", " ", self._emitted_message()).strip()
+        assert actual == self._spec_message()
+
+    def test_message_points_at_the_script_not_a_bare_kubectl_apply(self):
+        """Guards the specific regression, independent of exact wording."""
+        message = self._emitted_message()
+
+        assert "scripts/generate-kubeconfig.sh" in message
+        # The phrase may appear only as the thing NOT to do.
+        bare_apply = "kubectl apply -f kubernetes/"
+        if bare_apply in message:
+            assert "Do not apply" in message, (
+                "message names the blanket apply without warning against it"
+            )
+
+    def test_spec_blockquote_is_actually_found(self):
+        """If the regex stopped matching, the verbatim test would be vacuous."""
+        assert "generate-kubeconfig.sh" in self._spec_message()
+        assert len(self._spec_message()) > 100

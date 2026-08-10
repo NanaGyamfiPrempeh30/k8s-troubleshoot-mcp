@@ -16,6 +16,7 @@ from k8s_troubleshoot_mcp.tools.pods import (
     get_pod_events,
     list_pods,
 )
+from tests.property.strategies import pod_log_response
 
 
 @pytest.fixture
@@ -175,7 +176,9 @@ class TestGetPodLogs:
 
     def test_returns_correct_structure(self, config, mock_clients):
         """REQ-024: Returns required fields."""
-        mock_clients.core_v1.read_namespaced_pod_log.return_value = "line1\nline2\nline3"
+        mock_clients.core_v1.read_namespaced_pod_log.return_value = pod_log_response(
+            "line1\nline2\nline3"
+        )
 
         result = get_pod_logs(mock_clients, config, "my-pod", "default")
 
@@ -190,7 +193,7 @@ class TestGetPodLogs:
 
     def test_tail_lines_capped_at_max(self, config, mock_clients):
         """Property 10: tail_lines capped at config.max_log_lines."""
-        mock_clients.core_v1.read_namespaced_pod_log.return_value = "log content"
+        mock_clients.core_v1.read_namespaced_pod_log.return_value = pod_log_response("log content")
 
         result = get_pod_logs(
             mock_clients, config, "pod-1", "default", tail_lines=500
@@ -204,7 +207,7 @@ class TestGetPodLogs:
 
     def test_tail_lines_under_max_not_truncated(self, config, mock_clients):
         """tail_lines under max is not marked truncated."""
-        mock_clients.core_v1.read_namespaced_pod_log.return_value = "log"
+        mock_clients.core_v1.read_namespaced_pod_log.return_value = pod_log_response("log")
 
         result = get_pod_logs(
             mock_clients, config, "pod-1", "default", tail_lines=50
@@ -214,7 +217,7 @@ class TestGetPodLogs:
 
     def test_previous_logs(self, config, mock_clients):
         """REQ-026: previous=True requests previous container logs."""
-        mock_clients.core_v1.read_namespaced_pod_log.return_value = "previous logs"
+        mock_clients.core_v1.read_namespaced_pod_log.return_value = pod_log_response("previous logs")
 
         result = get_pod_logs(
             mock_clients, config, "pod-1", "default", previous=True
@@ -226,7 +229,7 @@ class TestGetPodLogs:
 
     def test_empty_logs_success(self, config, mock_clients):
         """REQ-028: Empty logs return success with empty content."""
-        mock_clients.core_v1.read_namespaced_pod_log.return_value = ""
+        mock_clients.core_v1.read_namespaced_pod_log.return_value = pod_log_response("")
 
         result = get_pod_logs(mock_clients, config, "pod-1", "default")
 
@@ -236,7 +239,7 @@ class TestGetPodLogs:
 
     def test_content_serialized(self, config, mock_clients):
         """Property 8: Log content is serialized for safety."""
-        mock_clients.core_v1.read_namespaced_pod_log.return_value = (
+        mock_clients.core_v1.read_namespaced_pod_log.return_value = pod_log_response(
             'Log with "quotes" and <tags>'
         )
 
@@ -247,7 +250,7 @@ class TestGetPodLogs:
 
     def test_container_specified(self, config, mock_clients):
         """Container name is passed to API."""
-        mock_clients.core_v1.read_namespaced_pod_log.return_value = "logs"
+        mock_clients.core_v1.read_namespaced_pod_log.return_value = pod_log_response("logs")
 
         result = get_pod_logs(
             mock_clients, config, "pod-1", "default", container="sidecar"

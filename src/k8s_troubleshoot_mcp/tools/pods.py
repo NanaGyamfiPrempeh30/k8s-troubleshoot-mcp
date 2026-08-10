@@ -52,6 +52,37 @@ def _handle_connection_error(tool_name: str, exc: Exception) -> dict[str, Any]:
     return connection_error(tool_name, f"Connection error: {exc}")
 
 
+def _decode_log_body(response: Any) -> str:
+    """Decode a raw pod-log response body to text.
+
+    get_pod_logs calls the API with ``_preload_content=False`` (see the comment
+    at the call site), so the kubernetes client hands back the urllib3 response
+    untouched and ``.data`` is bytes.
+
+    Container logs are arbitrary process output and carry no encoding guarantee,
+    so decoding uses ``errors="replace"``. A container that writes a stray
+    non-UTF-8 byte must not turn a diagnostic read into an exception — errors
+    reach the MCP layer as structured dicts only, never as raised exceptions.
+
+    A ``str`` body cannot come from the real client under
+    ``_preload_content=False``; it is accepted unchanged so that a future client
+    version which decodes correctly would not be corrupted by re-handling.
+    """
+    body = getattr(response, "data", response)
+
+    # urllib3 does not return the connection to the pool until the body is read;
+    # reading .data above drains it, and release_conn() makes that explicit.
+    release = getattr(response, "release_conn", None)
+    if callable(release):
+        release()
+
+    if body is None:
+        return ""
+    if isinstance(body, (bytes, bytearray, memoryview)):
+        return bytes(body).decode("utf-8", errors="replace")
+    return body
+
+
 def _age_seconds(creation_timestamp: datetime | None) -> int:
     """Calculate age in seconds from creation timestamp."""
     if creation_timestamp is None:
@@ -208,14 +239,30 @@ def get_pod_logs(
     effective_tail_lines = min(tail_lines, config.max_log_lines)
 
     try:
-        logs = clients.core_v1.read_namespaced_pod_log(
+        # _preload_content=False is required for correctness, not performance.
+        # This endpoint's response_types_map declares "str", and the client's
+        # decode step at api_client.py:202 is explicitly skipped for that type
+        # (`response_type not in ["file", "bytes", "str"]`). deserialize() then
+        # receives bytes, json.loads() rejects plain log text, and
+        # __deserialize_primitive falls through to str(bytes) — yielding the
+        # Python repr "b'line one\\nline two\\n'": one line, backslash-escaped,
+        # never the log text. Opting out of preloading bypasses that path and
+        # gives us the raw body to decode in _decode_log_body.
+        #
+        # Status handling is unaffected: rest.py raises ApiException (and its
+        # NotFoundException subclass) outside the _preload_content branch, and
+        # _request_timeout still reaches urllib3, where it governs the socket
+        # reads that _decode_log_body triggers.
+        response = clients.core_v1.read_namespaced_pod_log(
             name=pod_name,
             namespace=namespace,
             container=container if container else None,
             tail_lines=effective_tail_lines,
             previous=previous,
+            _preload_content=False,
             _request_timeout=config.api_timeout_seconds,
         )
+        logs = _decode_log_body(response)
 
     except ApiException as exc:
         if exc.status == 404:
@@ -418,7 +465,11 @@ def list_pods(
             total_containers = len(pod.spec.containers)
 
         pods.append({
-            "name": pod.metadata.name,
+            # metadata is optional in the model, and an unguarded .name raised
+            # AttributeError straight through to the MCP layer. The very next
+            # line already guards the same object for creation_timestamp; this
+            # matches list_nodes, which has always used the "unknown" fallback.
+            "name": pod.metadata.name if pod.metadata else "unknown",
             "phase": pod.status.phase if pod.status else "Unknown",
             "node_name": pod.spec.node_name if pod.spec else None,
             "restart_count": restart_count,

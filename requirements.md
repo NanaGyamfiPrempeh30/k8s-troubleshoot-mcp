@@ -60,10 +60,22 @@ new threat model review is conducted and documented.
 not set or is set to an empty string, THEN the server SHALL refuse to start and
 SHALL emit the following error message to stderr before exiting with code 1:
 
-> `"KUBECONFIG environment variable is not set. Provision the service account
-> using 'kubectl apply -f kubernetes/' and generate its kubeconfig using
-> 'scripts/generate-kubeconfig.sh'. Then set
-> KUBECONFIG=/path/to/generated-kubeconfig.yaml before starting the server."`
+> `"KUBECONFIG environment variable is not set. Run
+> 'scripts/generate-kubeconfig.sh <output-path> <namespace> [namespace...]' to
+> provision the service account and generate its kubeconfig. Do not apply
+> kubernetes/ manually: role.yaml is namespaced and rolebinding.yaml.template
+> requires substitution, so a blanket 'kubectl apply -f kubernetes/' reports
+> success while leaving the server unable to read anything. Then set
+> KUBECONFIG=<output-path> before starting the server."`
+
+The previous wording of this message instructed operators to run `kubectl apply
+-f kubernetes/`. Verified against a v1.35.1 API server with `--dry-run=server`,
+that command does not fail — it reports 5 of 6 manifests applied. `role.yaml`
+is created in whatever namespace is current (`default`, not the target), and
+`rolebinding.yaml.template` is never read at all, because `kubectl apply -f
+<dir>` only picks up `.yaml`, `.yml` and `.json`. No RoleBinding is created
+anywhere. Provisioning therefore *looks* successful and the server can read
+nothing, which is a worse failure than an error would have been.
 
 **REQ-002:** WHEN the server starts and `KUBECONFIG` is set, IF the file at the
 specified path does not exist or is not readable, THEN the server SHALL refuse to
@@ -153,11 +165,21 @@ The Role SHALL NOT include `secrets`, `configmaps`, `serviceaccounts`, or
 ### 5.2 Setup script
 
 **REQ-014:** The repository SHALL include `scripts/generate-kubeconfig.sh` that:
-1. Applies all manifests in `kubernetes/` to the target cluster
+1. Applies the manifests in `kubernetes/` in the order their scoping requires:
+   the cluster-scoped set (`namespace.yaml`, `serviceaccount.yaml`,
+   `clusterrole.yaml`, `clusterrolebinding.yaml`) together, then for each target
+   namespace `role.yaml` applied with `-n <namespace>` and
+   `rolebinding.yaml.template` rendered by substituting `__NAMESPACE__` before
+   applying. It SHALL NOT use a blanket `kubectl apply -f kubernetes/`, which
+   misplaces the Role and silently skips the `.template` file entirely.
 2. Creates a service account token (Kubernetes 1.24+ compatible — not the legacy auto-mount token)
-3. Writes a valid kubeconfig file to a path specified by the operator as `$1`
+3. Writes a valid kubeconfig file to a path specified by the operator as `$1`,
+   taking the target namespaces as `$2` onward
 4. Prints the path of the generated kubeconfig to stdout on success
 5. Exits with code 1 and a descriptive error if any step fails
+6. Refuses to bind `kube-system` or `kube-public`, which REQ-008 strips from
+   `ALLOWED_NAMESPACES` at startup — a binding there would grant real permission
+   the server refuses to use
 
 ---
 

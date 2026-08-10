@@ -236,10 +236,19 @@ def get_hpa_status(
                 "message": serialize_log_content(cond.message or ""),
             })
 
+    # status.current_replicas is optional in the v2 schema, unlike
+    # status.desired_replicas which is required. The `if status else 0` fallback
+    # already answers "no status observed yet" with 0, so passing None through
+    # when only the field was absent gave two different answers to the same
+    # question. Absent means no replicas observed, which is 0.
+    current_replicas = 0
+    if status is not None and status.current_replicas is not None:
+        current_replicas = status.current_replicas
+
     data = {
         "name": hpa_name,
         "namespace": namespace,
-        "current_replicas": status.current_replicas if status else 0,
+        "current_replicas": current_replicas,
         "desired_replicas": status.desired_replicas if status else 0,
         "min_replicas": spec.min_replicas if spec else None,
         "max_replicas": spec.max_replicas if spec else None,

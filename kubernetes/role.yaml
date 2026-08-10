@@ -1,0 +1,85 @@
+# REQ-013: namespaced read access for the diagnostic tools.
+#
+# This Role deliberately carries no `metadata.namespace`. Apply it once per
+# namespace listed in ALLOWED_NAMESPACES:
+#
+#     kubectl apply -n <namespace> -f kubernetes/role.yaml
+#
+# Kubernetes RBAC is the enforcement boundary for this server; the
+# ALLOWED_NAMESPACES env var is defense in depth, not the security control. A
+# namespace with no RoleBinding is unreadable regardless of how the server is
+# configured.
+#
+# Explicitly NOT granted (REQ-013, and section 3 of requirements.md):
+#   secrets          — credential exfiltration; the reason get_secrets does not exist
+#   configmaps       — routinely contain credentials
+#   serviceaccounts  — token access enables lateral movement
+#   persistentvolumes — cluster-scoped; get_pvc_status reads the claim, not the volume
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: k8s-mcp-readonly
+  labels:
+    app.kubernetes.io/name: k8s-troubleshoot-mcp
+    app.kubernetes.io/component: rbac
+rules:
+  # --- core API group -------------------------------------------------------
+  # pods, pods/status  → get_pod_status, get_pod_events, list_pods
+  # services           → get_service
+  # endpoints          → get_service (ready count), get_endpoints
+  # persistentvolumeclaims → get_pvc_status
+  - apiGroups: [""]
+    resources:
+      - pods
+      - pods/status
+      - services
+      - endpoints
+      - persistentvolumeclaims
+    verbs: ["get", "list", "watch"]
+
+  # --- pods/log: SEPARATE RULE BLOCK, `get` ONLY ---------------------------
+  # REQ-013 requires this to be its own rule and never merged into the `pods`
+  # rule above. Two independent reasons:
+  #   1. pods/log is a distinct subresource. Granting `pods` does not grant
+  #      `pods/log`; RBAC does not cascade from a resource to its subresources.
+  #   2. Keeping it separate means log access carries only `get` and cannot
+  #      silently inherit `list`/`watch` if the pods rule is ever widened.
+  # Consumed by: get_pod_logs
+  - apiGroups: [""]
+    resources:
+      - pods/log
+    verbs: ["get"]
+
+  # --- events.k8s.io --------------------------------------------------------
+  # The server uses EventsV1Api (events.k8s.io/v1) exclusively and never the
+  # deprecated core/v1 events endpoint, so the grant is scoped to that group
+  # only. Granting core "" events as well would be permission this server
+  # cannot use.
+  # Consumed by: get_pod_events, get_namespace_events
+  - apiGroups: ["events.k8s.io"]
+    resources:
+      - events
+    verbs: ["get", "list", "watch"]
+
+  # --- apps -----------------------------------------------------------------
+  # deployments  → get_deployment_status, list_deployments
+  # statefulsets → get_statefulset_status
+  # daemonsets   → get_daemonset_status
+  # replicasets  → required by REQ-013. No v1.0 tool reads them yet;
+  #                get_replicaset_status is deferred to v2.0 and
+  #                get_deployment_status currently reports active_replicaset as
+  #                null rather than listing ReplicaSets.
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - statefulsets
+      - daemonsets
+      - replicasets
+    verbs: ["get", "list", "watch"]
+
+  # --- autoscaling ----------------------------------------------------------
+  # Consumed by: get_hpa_status (AutoscalingV2Api)
+  - apiGroups: ["autoscaling"]
+    resources:
+      - horizontalpodautoscalers
+    verbs: ["get", "list", "watch"]

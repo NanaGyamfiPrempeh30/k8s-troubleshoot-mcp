@@ -53,6 +53,31 @@ def namespace_names() -> st.SearchStrategy[str]:
     )
 
 
+class PodLogResponse:
+    """The object read_namespaced_pod_log actually returns in this codebase.
+
+    get_pod_logs passes ``_preload_content=False``, so the kubernetes client
+    returns the raw urllib3 response rather than a deserialized ``str``, and the
+    body on it is **bytes**.
+
+    Mocking this call with a plain ``str`` is what let the bytes-repr bug ship:
+    every test agreed with every other test on a response shape the real client
+    never produces. Any test that stubs this endpoint must go through here.
+    """
+
+    def __init__(self, text: str, encoding: str = "utf-8") -> None:
+        self.data = text.encode(encoding)
+        self.released = False
+
+    def release_conn(self) -> None:
+        self.released = True
+
+
+def pod_log_response(text: str) -> PodLogResponse:
+    """Build a realistic read_namespaced_pod_log return value from log text."""
+    return PodLogResponse(text)
+
+
 def namespace_sets(min_size: int = 1, max_size: int = 6) -> st.SearchStrategy[list[str]]:
     """Non-empty lists of distinct valid namespace names."""
     return st.lists(
@@ -225,8 +250,9 @@ NAMESPACED_TOOLS: list[ToolSpec] = [
     ToolSpec(
         "get_pod_logs",
         lambda c, cfg, ns: get_pod_logs(c, cfg, "obj", ns),
-        # This endpoint returns a bare string, not a model.
-        {"read_namespaced_pod_log": "str"},
+        # Not a model: with _preload_content=False this endpoint yields the raw
+        # urllib3 response, whose body is bytes. See PodLogResponse above.
+        {"read_namespaced_pod_log": "urllib3_response(bytes)"},
     ),
     ToolSpec(
         "get_pod_events",

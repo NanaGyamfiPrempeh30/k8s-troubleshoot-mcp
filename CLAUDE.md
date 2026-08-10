@@ -1,7 +1,7 @@
 # Project context
 Read-only K8s diagnostics MCP server. Security-critical.
 Spec: requirements.md (68 EARS requirements)
-Design: design.md (15 correctness properties, P1-P15)
+Design: design.md (18 correctness properties, P1-P18)
 
 v0.2.0 backlog: migrate get_endpoints from core/v1 Endpoints to
 discovery.k8s.io/v1 EndpointSlice. Endpoints is deprecated (warning
@@ -55,6 +55,37 @@ tools/*.py file MUST be added to this registry in the same change.
 Before marking any tool complete, confirm it appears in
 NAMESPACED_TOOLS — a tool missing from the registry causes P4/P6/P7
 to silently stop covering it while still reporting green.
+
+The same registry entry also carries api_models, the {method_name:
+openapi_type} map that P17 and P18 use to generate fakes from the K8s
+schema. It must name every API method the tool calls, or the fake
+raises on the undeclared call. P18 additionally accepts the pseudo-type
+"urllib3_response(bytes)" for endpoints read with _preload_content=False
+(currently only read_namespaced_pod_log) — a tool declaring a bare "str"
+there would be tested against a shape the real client never returns,
+which is exactly how the get_pod_logs bytes-repr bug survived.
+
+# Failure category: faithful-looking corruption
+Distinct from leakage (P17's domain — raw dangerous chars reaching
+the response) and omission (point-of-omission comments — a field
+dropped entirely). This category is data present, schema-valid, and
+confidently wrong in a way that structurally evades other checks.
+
+Example: get_pod_logs originally returned str(bytes) instead of
+bytes.decode() — the output looked like a plausible one-line log,
+passed P17 because str() backslash-escapes control characters
+(nothing "raw" leaked), and was simply corrupted data presented as
+real. lines_returned said 1 for a 17-line log. Note that P17 did not
+merely fail to catch it; the bug's own corruption is what made P17
+pass, so a green escaping suite is evidence of nothing here.
+
+When auditing a tool's output, check not just "is anything unescaped
+or missing" but "does this value's type and shape match what the real
+API actually sends" — verify against the live client, not just the
+mock's assumed shape. Mocks are the specific hazard: every existing
+test agreed with every other test on a response shape the real client
+never produces. Adding one correct test alongside them is not enough;
+remove the wrong shape from the suite.
 
 # Plausible-wrong-answer class (found 3x: endpoints truncation,
 # HPA metric pairing, event ordering)

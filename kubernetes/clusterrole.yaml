@@ -1,0 +1,21 @@
+# REQ-012: cluster-scoped read access, limited to exactly `nodes` and
+# `namespaces`. No other resource may be added here without a documented threat
+# model review — this is the only ClusterRole the server holds, so anything
+# added grants access across every namespace in the cluster, including ones
+# absent from ALLOWED_NAMESPACES.
+#
+# Consumed by: get_node_status, list_nodes (nodes)
+#              list_namespaces (namespaces)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: k8s-mcp-readonly
+  labels:
+    app.kubernetes.io/name: k8s-troubleshoot-mcp
+    app.kubernetes.io/component: rbac
+rules:
+  - apiGroups: [""]
+    resources:
+      - nodes
+      - namespaces
+    verbs: ["get", "list", "watch"]
