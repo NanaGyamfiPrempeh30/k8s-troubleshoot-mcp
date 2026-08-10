@@ -1,0 +1,73 @@
+# Credentials — NEVER bake into an image.
+# A kubeconfig is a bearer credential for the cluster; an image containing one
+# grants cluster read access to anyone who can pull it. The server takes its
+# kubeconfig from a read-only mount at runtime instead (REQ-003: explicit path,
+# no fallback chain).
+kubeconfig
+kubeconfig.*
+*kubeconfig*.yaml
+*kubeconfig*.yml
+.kube/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.jks
+
+# Git
+.git/
+.gitignore
+.gitattributes
+.github/
+
+# Virtual environments
+venv/
+.venv/
+
+# Python build artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# IDE / OS
+.idea/
+.vscode/
+.kiro/
+.claude/
+.DS_Store
+desktop.ini
+
+# Tests and dev artifacts
+tests/
+.pytest_cache/
+.ruff_cache/
+.hypothesis/
+
+# Documentation and specs (not needed at runtime).
+# README.md is deliberately NOT excluded: pyproject.toml's readme field points
+# at it and hatchling fails the build without it.
+LICENSE
+DEBUG_LOG.md
+SECURITY.md
+requirements.md
+design.md
+CLAUDE.md
+MEMORY.md
+docs/
+
+# Provisioning assets — applied to a cluster by an operator, never used by the
+# running server. Excluding them keeps the image to code only.
+kubernetes/
+scripts/
+
+# Docker / CI metadata
+Dockerfile
+.dockerignore
+.pre-commit-config.yaml

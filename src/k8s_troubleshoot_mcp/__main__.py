@@ -9,6 +9,9 @@ from __future__ import annotations
 import logging
 import sys
 
+from kubernetes.config.config_exception import ConfigException
+from yaml import YAMLError
+
 from k8s_troubleshoot_mcp.config import validate_env
 from k8s_troubleshoot_mcp.k8s_client import build_clients
 from k8s_troubleshoot_mcp.server import create_app
@@ -46,7 +49,28 @@ def main() -> None:
     logger = logging.getLogger(__name__)
 
     # REQ-003: explicit kubeconfig path only, no fallback chain.
-    clients = build_clients(config.kubeconfig_path)
+    # REQ-002a: a file that exists and is readable can still be unparseable or
+    # structurally not a kubeconfig. Both surface from the client library as
+    # exceptions that would otherwise reach the operator as a traceback naming
+    # internal library paths instead of a diagnosis.
+    try:
+        clients = build_clients(config.kubeconfig_path)
+    except (ConfigException, YAMLError) as exc:
+        # The reason is included, but never the file's contents: a kubeconfig
+        # holds a bearer token for the cluster, and quoting the offending line
+        # would write it to the terminal and to anything collecting stderr.
+        # PyYAML's message carries path, line and column only — pinned by
+        # TestReq002aMalformedKubeconfig.test_message_never_quotes_the_file.
+        # Collapsed to one line: PyYAML embeds a newline before its
+        # "in <file>, line N, column M" clause, and REQ-002a specifies a
+        # single-line error so the diagnosis stays greppable in an operator's
+        # log rather than arriving as a fragment.
+        reason = " ".join(f"{type(exc).__name__}: {exc}".split())
+        sys.stderr.write(
+            f"KUBECONFIG file '{config.kubeconfig_path}' is not a valid "
+            f"kubeconfig: {reason}\n"
+        )
+        sys.exit(1)
 
     app = create_app(config, clients)
 

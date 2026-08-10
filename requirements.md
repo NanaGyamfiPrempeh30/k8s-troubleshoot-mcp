@@ -82,8 +82,44 @@ specified path does not exist or is not readable, THEN the server SHALL refuse t
 start and SHALL emit an error message identifying the unreadable path and exiting
 with code 1.
 
+**REQ-002a:** WHEN the server starts and the file at `KUBECONFIG` exists and is
+readable but cannot be parsed or lacks the structure of a kubeconfig, THEN the
+server SHALL emit a single-line error to stderr naming the path and the reason,
+and exit with code 1. It SHALL NOT propagate a Python traceback.
+
+REQ-002 covers only "does not exist or is not readable". A file that exists but
+is malformed — truncated, hand-edited, YAML with a tab, or a valid YAML document
+missing `current-context` — took an unhandled-exception path and printed a
+traceback naming internal library paths. Verified against the packaged
+container: an operator saw a nine-frame traceback ending in
+`kubernetes.config.config_exception.ConfigException` rather than a diagnosis.
+
+The reason text SHALL be derived from the underlying exception but SHALL NOT
+include the contents of the file. A kubeconfig carries a bearer token for the
+cluster, and an error message quoting the offending line would write that token
+to the operator's terminal and to any log collecting stderr.
+
 **REQ-003:** The server SHALL NOT fall back to `~/.kube/config` under any
 circumstance. There is no default kubeconfig path.
+
+**REQ-003a:** The Kubernetes API clients SHALL be constructed with
+`client_side_validation = False`.
+
+The generated client validates *server responses* against the OpenAPI schema and
+raises `ValueError` from a model setter when a field the schema marks required is
+absent. Verified against a live v1.35.1 API server: `events.k8s.io/v1` returns
+`eventTime: null` for every event mirrored from the legacy core/v1 path — which
+is most events a kubelet emits — while the schema marks `eventTime` required. The
+raise happens inside `kubernetes.client` during deserialization, before any tool
+code runs, so it bypasses each tool's `ApiException` handling and reaches the MCP
+layer as an unstructured error. That violates the rule that no exception escapes
+to the MCP layer.
+
+This server performs no writes, so client-side validation protects nothing: there
+is no outgoing payload to check. Against incoming data the API server is the
+authority, and a schema disagreement must not make a readable object unreadable.
+Disabling it converts "raise" into "the field is None", which the tools already
+handle (Property 18).
 
 ### 4.2 ALLOWED_NAMESPACES — required, no wildcard
 

@@ -1,0 +1,31 @@
+# .pre-commit-config.yaml
+#
+# Runs TruffleHog locally before every commit to catch secrets BEFORE they
+# reach the repo. First line of defense; .github/workflows/secret-scan.yml is
+# the safety net for commits made without the hook (or with --no-verify).
+#
+# This repository handles kubeconfigs containing live ServiceAccount tokens,
+# so an accidental commit is a real cluster-credential leak, not a theoretical
+# one. scripts/generate-kubeconfig.sh warns when its output path is inside the
+# repo and not gitignored; this hook is the backstop for that.
+#
+# Setup (one-time per machine):
+#   1. Install TruffleHog:
+#        curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin
+#   2. Install pre-commit:
+#        pip install pre-commit
+#   3. Install the hook:
+#        pre-commit install
+#
+# Run manually on all files:
+#   pre-commit run --all-files
+
+repos:
+  - repo: local
+    hooks:
+      - id: trufflehog
+        name: TruffleHog
+        description: Detect secrets in your data.
+        entry: bash -c 'trufflehog git file://. --since-commit HEAD --results=verified,unknown --fail'
+        language: system
+        stages: ["pre-commit", "pre-push"]
