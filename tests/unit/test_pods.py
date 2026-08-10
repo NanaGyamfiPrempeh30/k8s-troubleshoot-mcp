@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone, timedelta
 from unittest import mock
 
@@ -475,3 +476,95 @@ class TestListPods:
         assert result["status"] == "success"
         assert result["data"]["total"] == 0
         assert result["data"]["pods"] == []
+
+
+class TestPodEventsTotalAvailable:
+    """REQ-029a: `total` and `total_available` answer different questions.
+
+    get_pod_events has no caller-supplied limit and therefore no `capped` field,
+    so before this addendum a pod with exactly 50 events and a pod with 500
+    produced byte-identical responses. Nothing in the payload could separate
+    them. The count is free — the tool lists without a limit and sorts the full
+    set client-side before slicing.
+    """
+
+    @staticmethod
+    def _events(count):
+        base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        out = []
+        for i in range(count):
+            event = mock.MagicMock()
+            event.event_time = base + timedelta(seconds=i)
+            event.deprecated_first_timestamp = None
+            event.deprecated_last_timestamp = None
+            event.deprecated_count = 1
+            event.reason = f"R{i}"
+            event.note = f"note {i}"
+            event.type = "Normal"
+            out.append(event)
+        return out
+
+    def _invoke(self, clients, config, population, continue_token=None):
+        clients.events_v1.list_namespaced_event.return_value = mock.MagicMock(
+            items=self._events(population),
+            metadata=mock.MagicMock(_continue=continue_token),
+        )
+        return get_pod_events(clients, config, "my-pod", "default")["data"]
+
+    def test_distinguishes_50_of_50_from_50_of_500(self, config, mock_clients):
+        """The exact ambiguity this field exists to remove."""
+        fifty = self._invoke(mock_clients, config, 50)
+        five_hundred = self._invoke(mock_clients, config, 500)
+
+        assert (fifty["total"], fifty["total_available"]) == (50, 50)
+        assert (five_hundred["total"], five_hundred["total_available"]) == (50, 500)
+        assert fifty != five_hundred, "responses are still indistinguishable"
+
+    def test_equal_when_nothing_was_dropped(self, config, mock_clients):
+        data = self._invoke(mock_clients, config, 6)
+
+        assert data["total"] == data["total_available"] == 6
+        assert len(data["events"]) == 6
+
+    def test_cap_is_fifty(self, config, mock_clients):
+        """Property 11's cap, restated against the new fields."""
+        data = self._invoke(mock_clients, config, 120)
+
+        assert data["total"] == 50
+        assert len(data["events"]) == 50
+        assert data["total_available"] == 120
+
+    def test_paginated_response_reports_null(self, config, mock_clients, caplog):
+        with caplog.at_level(logging.WARNING):
+            data = self._invoke(mock_clients, config, 60, continue_token="tok")
+
+        assert data["total_available"] is None
+        assert data["total"] == 50, "total still describes the response itself"
+        assert "paginated pod event list" in caplog.text
+
+    def test_clean_response_logs_nothing(self, config, mock_clients, caplog):
+        with caplog.at_level(logging.WARNING):
+            self._invoke(mock_clients, config, 3)
+
+        assert caplog.text == ""
+
+    def test_empty_path_has_the_same_shape(self, config, mock_clients):
+        """REQ-029a/REQ-031: a client must not branch on which keys exist."""
+        empty = self._invoke(mock_clients, config, 0)
+        populated = self._invoke(mock_clients, config, 3)
+
+        assert empty["total"] == 0
+        assert empty["total_available"] == 0
+        assert "message" in empty
+        assert set(populated) | {"message"} == set(empty), (
+            "empty and populated responses expose different keys"
+        )
+
+    def test_missing_list_metadata_is_tolerated(self, config, mock_clients):
+        mock_clients.events_v1.list_namespaced_event.return_value = mock.MagicMock(
+            items=self._events(4), metadata=None
+        )
+
+        data = get_pod_events(mock_clients, config, "my-pod", "default")["data"]
+
+        assert data["total_available"] == 4

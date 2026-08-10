@@ -97,8 +97,15 @@ code 1:
 > (e.g. ALLOWED_NAMESPACES=staging,production). Wildcard '*' is not accepted."`
 
 **REQ-005:** WHEN `ALLOWED_NAMESPACES` is set, IF the value contains `*` or
-`all`, THEN the server SHALL refuse to start and SHALL emit an error message
-stating that wildcard namespace access is not permitted, exiting with code 1.
+`all`, THEN the server SHALL refuse to start and SHALL emit the following error
+message to stderr before exiting with code 1:
+
+> `"ALLOWED_NAMESPACES contains wildcard token(s): <tokens>. Wildcard namespace
+> access is not permitted."`
+
+`<tokens>` is the sorted collection of offending tokens found in the value. The
+message SHALL name them rather than only stating that a wildcard was present, so
+an operator who passed several values knows which were rejected.
 
 **REQ-006:** WHEN `ALLOWED_NAMESPACES` is set to a valid comma-separated list,
 the server SHALL parse the list at startup and store it as an immutable set for
@@ -264,6 +271,20 @@ query events using `EventsV1Api.list_namespaced_event()` (events.k8s.io/v1),
 filtering by `regarding.name` equals `pod_name` and `regarding.kind` equals `Pod`.
 The tool SHALL NOT use the deprecated `CoreV1Api` events endpoint. The tool SHALL
 return up to 50 most recent events sorted by last timestamp descending.
+
+**REQ-029a:** The response SHALL include `total` (events in this response) and
+`total_available` (events the API returned for this pod before the 50-event cap),
+on the same reasoning as REQ-056a for `get_namespace_events`. Both fields SHALL
+be present on the empty-result path of REQ-031 as well, so the response shape
+does not vary with the result count.
+
+This tool has no caller-supplied `limit` and therefore no `capped` field, which
+makes the distinction more load-bearing here than in `get_namespace_events`:
+before this addendum, a pod with exactly 50 events and a pod with 500 produced
+byte-identical responses and nothing in the payload could separate them.
+
+IF the list response carries a non-empty `continue` token, `total_available`
+SHALL be `null` and the tool SHALL log a `WARNING` to stderr, per REQ-056a.
 
 **REQ-030:** Each event in the response SHALL include: reason, message, count,
 first timestamp, last timestamp, type (Normal/Warning).
@@ -487,6 +508,24 @@ sorted by last timestamp descending. The tool SHALL use `EventsV1Api.list_namesp
 **REQ-056:** The `limit` parameter SHALL be capped at 50. IF the caller passes a
 value greater than 50, the tool SHALL silently cap it and SHALL include a
 `capped: true` field in the response.
+
+**REQ-056a:** The response SHALL include a `total_available` field reporting how
+many events the API returned for the namespace *before* the cap was applied,
+distinct from `total`, which reports how many are in this response.
+
+`capped` alone is ambiguous: it reports only whether the caller's `limit`
+exceeded 50, so `{"total": 50, "capped": false}` is returned both when the
+namespace holds exactly 50 events and when it holds 500. The count is already
+in hand — the tool lists without a `limit` and sorts the full set client-side
+before slicing — so an ambiguous answer is being shipped while the real number
+is in memory. This is the same defect class as the `get_endpoints` truncation
+gap (REQ-047a).
+
+IF the list response carries a non-empty `continue` token, `total_available`
+SHALL be `null` rather than the page-one count, and the tool SHALL log a
+`WARNING` to stderr, on the same reasoning as REQ-058a: a page-one count
+presented as a namespace total is a wrong answer that looks right. `total`
+remains accurate in that case, because it describes the response itself.
 
 **REQ-057:** Each event SHALL include: involved object kind, involved object name,
 reason, message, count, first timestamp, last timestamp, and type (Normal/Warning).

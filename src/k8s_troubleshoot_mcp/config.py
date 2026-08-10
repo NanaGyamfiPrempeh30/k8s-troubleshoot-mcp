@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 
 # System namespaces that are never allowed (REQ-008)
 _SYSTEM_NAMESPACES = frozenset({"kube-system", "kube-public"})
@@ -82,17 +85,38 @@ def _validate_allowed_namespaces() -> frozenset[str]:
     # REQ-005: Reject wildcard tokens
     wildcards_found = namespaces & _WILDCARD_TOKENS
     if wildcards_found:
+        # Comma-joined rather than interpolating the collection directly: a
+        # bare sorted() renders as a Python list repr ("['*']") in an
+        # operator-facing message.
         _fatal(
-            f"ALLOWED_NAMESPACES contains wildcard token(s): {sorted(wildcards_found)}. "
+            "ALLOWED_NAMESPACES contains wildcard token(s): "
+            f"{', '.join(sorted(wildcards_found))}. "
             "Wildcard namespace access is not permitted."
         )
 
     # REQ-008: Remove system namespaces and warn
     system_ns_found = namespaces & _SYSTEM_NAMESPACES
     if system_ns_found:
-        sys.stderr.write(
-            "WARNING: kube-system and kube-public are not permitted in ALLOWED_NAMESPACES "
-            "and have been removed from the allowed set.\n"
+        # REQ-008/REQ-010: emitted through the logging framework, like every
+        # other WARNING in this server, rather than a raw stderr write.
+        #
+        # This fires inside validate_env(), which __main__ runs *before*
+        # configure_logging(), so no handler is attached yet and Python routes
+        # it through logging.lastResort — a WARNING-level handler whose stream
+        # property re-reads sys.stderr on every emit. Verified out-of-process:
+        # the line lands on stderr and never on stdout, so REQ-010 holds both
+        # before and after logging is configured. A side effect is that this
+        # particular warning is not suppressible via LOG_LEVEL, which is the
+        # right default for a message saying the operator did not get the
+        # access they asked for.
+        # The "WARNING: " prefix stays in the message text rather than being
+        # left to the formatter: logging.lastResort has no formatter, so before
+        # configure_logging runs the operator would otherwise see a bare
+        # sentence with no severity marker. It also keeps REQ-008's specified
+        # text emitted verbatim.
+        logger.warning(
+            "WARNING: kube-system and kube-public are not permitted in "
+            "ALLOWED_NAMESPACES and have been removed from the allowed set."
         )
         namespaces = namespaces - _SYSTEM_NAMESPACES
 
@@ -169,9 +193,16 @@ def _validate_max_log_lines() -> int:
 
     # REQ-071: Clamp to hard ceiling with warning
     if max_lines > _MAX_LOG_LINES_CEILING:
-        sys.stderr.write(
-            f"WARNING: MAX_LOG_LINES value {max_lines} exceeds the hard ceiling of "
-            f"{_MAX_LOG_LINES_CEILING} and has been clamped to {_MAX_LOG_LINES_CEILING}.\n"
+        # REQ-071/REQ-010: through the logging framework, matching REQ-008.
+        # Emitted from validate_env(), before __main__ calls configure_logging(),
+        # so logging.lastResort carries it to stderr; the "WARNING: " prefix
+        # stays in the text because lastResort has no formatter to supply one.
+        logger.warning(
+            "WARNING: MAX_LOG_LINES value %s exceeds the hard ceiling of %s "
+            "and has been clamped to %s.",
+            max_lines,
+            _MAX_LOG_LINES_CEILING,
+            _MAX_LOG_LINES_CEILING,
         )
         max_lines = _MAX_LOG_LINES_CEILING
 

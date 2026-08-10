@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 from unittest import mock
 
@@ -318,3 +319,99 @@ class TestGetNamespaceEvents:
 
         assert result["status"] == "error"
         assert result["error"] == "connection_error"
+
+
+class TestTotalAvailable:
+    """REQ-056a: `total` and `total_available` answer different questions.
+
+    `capped` reports only whether the caller's limit exceeded 50, so
+    {"total": 50, "capped": false} was returned both for a namespace holding
+    exactly 50 events and one holding 500. The real count is free — the tool
+    lists without a limit and sorts the full set before slicing.
+    """
+
+    @staticmethod
+    def _events(count):
+        return [make_event(offset=i, reason=f"R{i}", note=f"note {i}") for i in range(count)]
+
+    def test_distinguishes_50_of_50_from_50_of_500(self, config, mock_clients):
+        """The exact ambiguity this field exists to remove."""
+        results = {}
+        for population in (50, 500):
+            mock_clients.events_v1.list_namespaced_event.return_value = mock.MagicMock(
+                items=self._events(population), metadata=mock.MagicMock(_continue=None)
+            )
+            data = get_namespace_events(mock_clients, config, "default")["data"]
+            results[population] = (data["total"], data["total_available"], data["capped"])
+
+        assert results[50] == (50, 50, False)
+        assert results[500] == (50, 500, False)
+        assert results[50] != results[500], "responses are still indistinguishable"
+
+    def test_equal_when_nothing_was_left_behind(self, config, mock_clients):
+        mock_clients.events_v1.list_namespaced_event.return_value = mock.MagicMock(
+            items=self._events(7), metadata=mock.MagicMock(_continue=None)
+        )
+
+        data = get_namespace_events(mock_clients, config, "default")["data"]
+
+        assert data["total"] == data["total_available"] == 7
+
+    def test_counts_before_the_caller_limit_not_just_the_hard_cap(
+        self, config, mock_clients
+    ):
+        """A small explicit limit must not shrink total_available."""
+        mock_clients.events_v1.list_namespaced_event.return_value = mock.MagicMock(
+            items=self._events(30), metadata=mock.MagicMock(_continue=None)
+        )
+
+        data = get_namespace_events(mock_clients, config, "default", limit=5)["data"]
+
+        assert data["total"] == 5
+        assert data["total_available"] == 30
+        assert data["capped"] is False
+
+    def test_empty_namespace_is_zero_not_null(self, config, mock_clients):
+        mock_clients.events_v1.list_namespaced_event.return_value = mock.MagicMock(
+            items=[], metadata=mock.MagicMock(_continue=None)
+        )
+
+        data = get_namespace_events(mock_clients, config, "default")["data"]
+
+        assert data["total_available"] == 0
+        assert data["total_available"] is not None
+
+    def test_paginated_response_reports_null_not_page_one_count(
+        self, config, mock_clients, caplog
+    ):
+        """A page-one count presented as a namespace total is the same defect."""
+        mock_clients.events_v1.list_namespaced_event.return_value = mock.MagicMock(
+            items=self._events(60), metadata=mock.MagicMock(_continue="tok")
+        )
+
+        with caplog.at_level(logging.WARNING):
+            data = get_namespace_events(mock_clients, config, "default")["data"]
+
+        assert data["total_available"] is None
+        assert data["total"] == 50, "total still describes the response itself"
+        assert "paginated event list" in caplog.text
+
+    def test_complete_response_logs_nothing(self, config, mock_clients, caplog):
+        mock_clients.events_v1.list_namespaced_event.return_value = mock.MagicMock(
+            items=self._events(3), metadata=mock.MagicMock(_continue=None)
+        )
+
+        with caplog.at_level(logging.WARNING):
+            get_namespace_events(mock_clients, config, "default")
+
+        assert caplog.text == ""
+
+    def test_missing_list_metadata_is_tolerated(self, config, mock_clients):
+        """List metadata is optional; absence is not a pagination signal."""
+        mock_clients.events_v1.list_namespaced_event.return_value = mock.MagicMock(
+            items=self._events(4), metadata=None
+        )
+
+        data = get_namespace_events(mock_clients, config, "default")["data"]
+
+        assert data["total_available"] == 4

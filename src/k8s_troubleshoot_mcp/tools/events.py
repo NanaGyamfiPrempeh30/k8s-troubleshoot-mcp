@@ -8,6 +8,7 @@ endpoint is never used.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
@@ -16,6 +17,7 @@ from urllib3.exceptions import MaxRetryError, NewConnectionError
 
 from k8s_troubleshoot_mcp.config import ServerConfig
 from k8s_troubleshoot_mcp.k8s_client import K8sClients
+from k8s_troubleshoot_mcp.pagination import total_available
 from k8s_troubleshoot_mcp.response import (
     success,
     namespace_not_allowed,
@@ -23,6 +25,8 @@ from k8s_troubleshoot_mcp.response import (
     connection_error,
     serialize_log_content,
 )
+
+logger = logging.getLogger(__name__)
 
 # REQ-056: hard ceiling on returned events, regardless of requested limit.
 MAX_EVENTS = 50
@@ -143,6 +147,9 @@ def get_namespace_events(
     except (MaxRetryError, NewConnectionError, OSError) as exc:
         return _handle_connection_error(tool_name, exc)
 
+    # REQ-056a: captured before the slice, while the full set is still in hand.
+    events_available = total_available(event_list, logger, "event")
+
     # Sorting happens client-side rather than via the API's `limit` parameter:
     # that parameter paginates in the API server's own ordering, so using it
     # would return an arbitrary slice rather than the most recent events.
@@ -173,7 +180,10 @@ def get_namespace_events(
 
     data = {
         "namespace": namespace,
+        # `total` describes this response; `total_available` describes the
+        # namespace. They differ exactly when events were left behind.
         "total": len(events),
+        "total_available": events_available,
         "capped": capped,
         "events": events,
     }

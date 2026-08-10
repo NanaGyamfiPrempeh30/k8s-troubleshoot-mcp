@@ -5,6 +5,7 @@ Implements: get_pod_status, get_pod_logs, get_pod_events, list_pods
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
@@ -13,6 +14,7 @@ from urllib3.exceptions import MaxRetryError, NewConnectionError
 
 from k8s_troubleshoot_mcp.config import ServerConfig
 from k8s_troubleshoot_mcp.k8s_client import K8sClients
+from k8s_troubleshoot_mcp.pagination import total_available
 from k8s_troubleshoot_mcp.response import (
     success,
     error,
@@ -21,6 +23,13 @@ from k8s_troubleshoot_mcp.response import (
     connection_error,
     serialize_log_content,
 )
+
+
+logger = logging.getLogger(__name__)
+
+# REQ-029: hard ceiling on returned pod events. Mirrors MAX_EVENTS in events.py;
+# the two tools cap independently and there is no caller-supplied limit here.
+MAX_POD_EVENTS = 50
 
 
 def _check_namespace(
@@ -346,7 +355,10 @@ def get_pod_events(
     except (MaxRetryError, NewConnectionError, OSError) as exc:
         return _handle_connection_error(tool_name, exc)
 
-    # Property 11: Sort by last timestamp descending, cap at 50
+    # REQ-029a: captured before the slice, while the full set is still in hand.
+    events_available = total_available(event_list, logger, "pod event")
+
+    # Property 11: Sort by last timestamp descending, cap at MAX_POD_EVENTS
     events = event_list.items
 
     def get_event_time(event: Any) -> datetime:
@@ -360,13 +372,17 @@ def get_pod_events(
             return event.deprecated_first_timestamp
         return datetime.min.replace(tzinfo=timezone.utc)
 
-    events_sorted = sorted(events, key=get_event_time, reverse=True)[:50]
+    events_sorted = sorted(events, key=get_event_time, reverse=True)[:MAX_POD_EVENTS]
 
     # REQ-031: Handle empty events
     if not events_sorted:
         data = {
             "pod_name": pod_name,
             "namespace": namespace,
+            # REQ-029a: present on the empty path too, so a client never has to
+            # branch on which keys exist before reading a count.
+            "total": 0,
+            "total_available": events_available,
             "events": [],
             "message": f"No events found for pod '{pod_name}' in namespace '{namespace}'.",
         }
@@ -400,6 +416,10 @@ def get_pod_events(
     data = {
         "pod_name": pod_name,
         "namespace": namespace,
+        # `total` describes this response; `total_available` describes the pod.
+        # They differ exactly when the cap dropped events (REQ-029a).
+        "total": len(formatted_events),
+        "total_available": events_available,
         "events": formatted_events,
     }
 

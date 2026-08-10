@@ -388,13 +388,29 @@ the `str(bytes)` defect produced (Property 18 / "faithful-looking corruption").
 ```json
 {
   "pod_name": "string", "namespace": "string",
+  "total": 3, "total_available": "3|null",
   "events": [{
     "reason": "string", "message": "string",
     "count": 3, "first_timestamp": "ISO8601",
     "last_timestamp": "ISO8601", "type": "Warning|Normal"
-  }]
+  }],
+  "message": "No events found for pod 'web-1' in namespace 'default'."
 }
 ```
+
+`message` is present only on the empty-result path (REQ-031). `total` and
+`total_available` are present on **both** paths, so a client never has to branch
+on which keys exist before reading a count.
+
+`total` is `len(events)`; `total_available` is how many events the API returned
+for this pod before the 50-event cap. `total < total_available` means events
+were dropped. Unlike `get_namespace_events` there is no `capped` field, because
+this tool takes no caller-supplied limit — which made the ambiguity worse here,
+not better: before REQ-029a a pod with exactly 50 events and one with 500
+produced byte-identical responses.
+
+`total_available` is `null` when the list response carries a `continue` token,
+per the shared rule in `pagination.py`. `total` stays accurate regardless.
 
 #### `list_pods` data
 ```json
@@ -434,6 +450,70 @@ the `str(bytes)` defect produced (Property 18 / "faithful-looking corruption").
   "active_replicaset": "string"
 }
 ```
+
+#### `list_deployments` data
+```json
+{
+  "namespace": "string", "total": 5,
+  "deployments": [{
+    "name": "string", "desired_replicas": "3|null",
+    "ready_replicas": 3, "available_replicas": 3,
+    "age_seconds": 86400,
+    "fully_available": true
+  }]
+}
+```
+
+`fully_available` is derived, not read from the API: it is
+`available_replicas == desired_replicas and desired_replicas > 0`. The trailing
+clause means a Deployment scaled to zero reports `fully_available: false`, not
+`true` — zero available out of zero desired is arithmetically "all of them" but
+is not a healthy state to report as such.
+
+`ready_replicas` and `available_replicas` are `0` rather than `null` when absent:
+the API omits them at zero, and the tool normalizes because absent unambiguously
+means none. `desired_replicas` carries `|null` per the
+unreachable-but-possible rule below.
+
+#### `get_statefulset_status` data
+```json
+{
+  "name": "string", "namespace": "string",
+  "replicas": "3|null",
+  "ready_replicas": 3, "current_replicas": 3, "updated_replicas": 3,
+  "current_revision": "web-5f7d8c9b4|null",
+  "update_revision": "web-5f7d8c9b4|null",
+  "update_strategy": "RollingUpdate|null"
+}
+```
+
+`current_revision` and `update_revision` are genuinely nullable: the StatefulSet
+controller has not written them on a freshly created object, and
+`--dry-run=server` confirms they are absent at creation. They are equal during
+steady state and differ mid-rollout, which is the diagnostic signal.
+
+`status.conditions` is deliberately excluded per REQ-043 —
+`V1StatefulSetCondition` does carry `message` and `reason`, so adding it would
+require `serialize_log_content` (see the point-of-omission comment in
+`workloads.py`).
+
+#### `get_daemonset_status` data
+```json
+{
+  "name": "string", "namespace": "string",
+  "desired_number_scheduled": 3, "current_number_scheduled": 3,
+  "number_ready": 3, "number_available": 3, "number_misscheduled": 0,
+  "update_strategy": "RollingUpdate|null"
+}
+```
+
+All five counts are `0` rather than `null` when absent. Note the asymmetry in the
+implementation: `number_available` is guarded against a `None` field, while the
+other four are guarded only against a missing `status` object. This is correct
+by the schema — `number_available` is the only one of the five that is optional;
+the rest are required and cannot arrive unset.
+
+`status.conditions` is excluded per REQ-045 on the same terms as StatefulSet.
 
 #### `get_endpoints` data
 ```json
@@ -524,12 +604,119 @@ the absent state is not merely possible but is what the API sends for *every*
 schedulable node, and from `current_replicas` above, where the tool contradicted
 itself. Existing tests that assert `None` for these fields are correct as written.
 
-**Gap:** `get_statefulset_status.replicas` has the same property
-(`StatefulSet.spec.replicas` defaults to `1`) but cannot be annotated here —
-this document has no data model for `get_statefulset_status`, `list_deployments`,
-`get_daemonset_status`, `get_namespace_events`, `list_namespaces` or
-`list_nodes`. Those models should be added, at which point the same annotation
-applies.
+Two further fields fall under this rule, annotated in the models added above:
+
+| field | server-supplied default |
+|-------|-------------------------|
+| `StatefulSet.spec.replicas` | `1` |
+| `list_deployments[].desired_replicas` (`Deployment.spec.replicas`) | `1` |
+
+`metadata.name` is a third case with a different character. It is optional in
+`V1ObjectMeta`, so `list_pods`, `list_deployments` and `list_nodes` can in
+principle receive an object with no name. Each guards a missing `metadata`
+object with the string `"unknown"`, but a present-metadata/absent-name object
+would still yield `null`. This is left alone: the API server assigns
+`metadata.name` on every object it persists, an unnamed object would be
+unusable for any follow-up call regardless of what this server reported, and
+inventing a placeholder would be worse than surfacing the absence. All 16 data
+models are now documented; there is no remaining undocumented tool.
+
+#### `get_namespace_events` data
+```json
+{
+  "namespace": "string",
+  "total": 12, "total_available": "12|null", "capped": false,
+  "events": [{
+    "involved_object_kind": "Pod|null",
+    "involved_object_name": "web-5f7d8c9b4-x2k9p|null",
+    "reason": "string", "message": "string",
+    "count": 5,
+    "first_timestamp": "ISO8601|null", "last_timestamp": "ISO8601|null",
+    "type": "Warning"
+  }]
+}
+```
+
+Three fields count different things and are easy to confuse:
+
+| field | question it answers |
+|-------|---------------------|
+| `total` | how many events are in **this response** (`len(events)`) |
+| `total_available` | how many events the API returned for the **namespace**, before the cap |
+| `capped` | whether the **caller's** `limit` exceeded the hard maximum of 50 |
+
+`capped` is about the request, not the data. A namespace holding 500 events
+queried at the default limit returns `capped: false` — nothing about the
+caller's limit was capped — alongside 50 events. Before `total_available`
+existed (REQ-056a) that response was identical to one from a namespace holding
+exactly 50, and a client had no way to tell "50 of 50" from "50 of 500".
+`total < total_available` is now the signal that events were left behind.
+
+`total_available` is `null` when the list response carries a `continue` token.
+An unbounded list is complete per the API contract, so this should not happen;
+if it does, the count in hand is page one rather than the namespace total, and
+reporting it as a total would recreate exactly the ambiguity the field removes.
+The tool logs a `WARNING` to stderr in that case. `total` stays accurate
+regardless, since it only ever describes the response itself.
+
+`reason`, `type`, `message` and both involved-object fields all route through
+`serialize_log_content` (REQ-057a). `message` is the `note` field on
+`EventsV1Event`, renamed in the response for continuity with `get_pod_events`.
+
+`involved_object_kind` and `involved_object_name` are null when the event
+carries no `regarding` reference. `count` falls back to `1` when
+`deprecated_count` is absent, since an event that exists occurred at least once.
+Both timestamps are nullable — the `deprecated_*` timestamp fields are optional
+on `events.k8s.io/v1`.
+
+#### `list_namespaces` data
+```json
+{
+  "total": 2,
+  "namespaces": [{
+    "name": "string",
+    "phase": "Active|Terminating|null",
+    "age_seconds": 86400
+  }]
+}
+```
+
+The response is the **intersection** of `allowed_namespaces` and the namespaces
+that actually exist on the cluster (Property 16) — a namespace listed in
+`ALLOWED_NAMESPACES` but absent from the cluster does not appear. Entries are
+sorted by name so output does not depend on the API server's incidental key
+ordering, which the API contract does not guarantee.
+
+`phase` is nullable when `status` is absent. No `limit` is passed to
+`list_namespace` (REQ-058a).
+
+#### `list_nodes` data
+```json
+{
+  "total": 3,
+  "nodes": [{
+    "name": "string",
+    "ready": "True|False|Unknown",
+    "roles": ["control-plane"],
+    "age_seconds": 86400,
+    "kubelet_version": "v1.29.0|null",
+    "unschedulable": false
+  }]
+}
+```
+
+`ready` is the **string** status of the `Ready` condition, not a boolean — the
+Kubernetes condition vocabulary is `"True"`, `"False"`, `"Unknown"`, and
+`"Unknown"` is a distinct diagnostic state that a boolean would erase. It is
+`"Unknown"` when no `Ready` condition is present at all.
+
+`unschedulable` is always a boolean. The API omits `spec.unschedulable` on every
+schedulable node, and the tool normalizes that absence to `false` — see
+`list_nodes`' handling and the contrast drawn under the
+unreachable-but-possible rule below.
+
+`roles` is derived from `node-role.kubernetes.io/<role>` label keys, sorted, and
+is `[]` for a node carrying none. `kubelet_version` is escaped per REQ-035a.
 
 #### `get_pvc_status` data
 ```json
