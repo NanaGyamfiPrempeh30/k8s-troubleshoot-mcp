@@ -28,7 +28,7 @@ docker run -i --rm \
   -v /secure/path/k8s-mcp-kubeconfig.yaml:/kubeconfig:ro \
   -e KUBECONFIG=/kubeconfig \
   -e ALLOWED_NAMESPACES=staging,production \
-  nanagyamfiprempeh30/k8s-troubleshoot-mcp:latest
+  yawgyamfiprem32/k8s-troubleshoot-mcp:latest
 ```
 
 `-i` is required — JSON-RPC travels on stdin/stdout, so the container will
@@ -49,7 +49,7 @@ writable mount grants privilege it has no use for.
         "-v", "/secure/path/k8s-mcp-kubeconfig.yaml:/kubeconfig:ro",
         "-e", "KUBECONFIG=/kubeconfig",
         "-e", "ALLOWED_NAMESPACES=staging,production",
-        "nanagyamfiprempeh30/k8s-troubleshoot-mcp:latest"
+        "yawgyamfiprem32/k8s-troubleshoot-mcp:latest"
       ]
     }
   }

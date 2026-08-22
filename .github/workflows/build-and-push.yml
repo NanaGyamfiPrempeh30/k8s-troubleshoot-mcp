@@ -9,7 +9,7 @@ on:
       - main
 
 env:
-  IMAGE_NAME: docker.io/nanagyamfiprempeh30/k8s-troubleshoot-mcp
+  IMAGE_NAME: docker.io/yawgyamfiprem32/k8s-troubleshoot-mcp
   # Must match `name` in server.json. The MCP Registry verifies ownership by
   # comparing the image's io.modelcontextprotocol.server.name annotation to
   # this value, so a drift between Dockerfile and server.json is a failed
@@ -25,6 +25,16 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      # Runs before the build so a transposed namespace costs no build minutes.
+      # The other identity checks in this job compare values to *each other*
+      # (server.json's identifier against IMAGE_NAME, the image label against
+      # MCP_SERVER_NAME) and therefore pass when both sides are wrong in the
+      # same direction — which is how the GitHub handle ended up in every
+      # docker.io path here, agreeing with itself, until a manual grep found it.
+      # This step pins the literal namespaces, so agreement is not sufficient.
+      - name: Verify GitHub and Docker Hub namespaces are not transposed
+        run: python3 scripts/check-namespaces.py
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -167,6 +177,6 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-          repository: nanagyamfiprempeh30/k8s-troubleshoot-mcp
+          repository: yawgyamfiprem32/k8s-troubleshoot-mcp
           short-description: "Read-only MCP server for Kubernetes cluster diagnostics"
           readme-filepath: ./docs/dockerhub-overview.md

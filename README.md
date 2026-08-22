@@ -406,7 +406,8 @@ k8s-troubleshoot-mcp/
 │   ├── role.yaml                # pods/log in its own rule block
 │   └── rolebinding.yaml.template
 ├── scripts/
-│   └── generate-kubeconfig.sh   # provisions RBAC, mints a scoped token
+│   ├── generate-kubeconfig.sh   # provisions RBAC, mints a scoped token
+│   └── check-namespaces.py      # CI guard: GitHub vs Docker Hub handles
 ├── docs/
 │   ├── PUBLISHING.md            # Docker Hub + MCP Registry release runbook
 │   └── dockerhub-overview.md    # Docker Hub repository description

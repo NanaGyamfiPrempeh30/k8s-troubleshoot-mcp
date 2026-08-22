@@ -10,13 +10,14 @@ it is not a warning you can push past.
 
 ### Docker Hub
 
-1. Create the repository `nanagyamfiprempeh30/k8s-troubleshoot-mcp`.
+1. Create the repository `yawgyamfiprem32/k8s-troubleshoot-mcp`.
 2. Generate an access token (Account Settings → Personal access tokens) with
    **Read, Write, Delete** scope. Read-only cannot push; write-only cannot
    update the description.
 3. Add two GitHub repository secrets (Settings → Secrets and variables →
    Actions):
-   - `DOCKERHUB_USERNAME` — the Docker Hub account name
+   - `DOCKERHUB_USERNAME` — `yawgyamfiprem32` (the Docker Hub account, **not**
+     the GitHub one)
    - `DOCKERHUB_TOKEN` — the access token, **not** the account password
 
 ### MCP Registry
@@ -36,6 +37,22 @@ as that GitHub account. No other account can publish under it.
 
 ## The identity chain
 
+> **Two different accounts, and they are not interchangeable.** The GitHub
+> handle is `nanagyamfiprempeh30`; the Docker Hub handle is `yawgyamfiprem32`.
+> The rule is mechanical: anything under `io.github.*` or a `github.com` URL
+> takes the **GitHub** handle, and anything under `docker.io/*` or naming a
+> Docker Hub repository path takes the **Docker Hub** handle. Substituting one
+> for the other produces a value that looks entirely plausible and fails only
+> at push or publish time.
+>
+> `scripts/check-namespaces.py` enforces this mechanically and runs as the
+> first step of the build workflow. It pins the literal namespaces rather than
+> comparing the declared values to each other, because two values that are both
+> wrong in the same direction still agree — that is exactly how the GitHub
+> handle occupied every `docker.io/` path here without any check noticing. It
+> also scans the whole tree, so a bare `docker run <handle>/…` in prose is
+> caught too. Run it locally any time: `python3 scripts/check-namespaces.py`.
+
 Four places state the same two identities. They are cross-checked in CI
 (`.github/workflows/build-and-push.yml`), so a mismatch fails the build rather
 than the publish — but when you change one, change all of them:
@@ -43,7 +60,7 @@ than the publish — but when you change one, change all of them:
 | Identity | Stated in |
 |----------|-----------|
 | Server name `io.github.nanagyamfiprempeh30/k8s-troubleshoot-mcp` | `server.json` → `name`; `Dockerfile` → `LABEL io.modelcontextprotocol.server.name`; workflow → `MCP_SERVER_NAME` |
-| Image `docker.io/nanagyamfiprempeh30/k8s-troubleshoot-mcp:<version>` | `server.json` → `packages[0].identifier`; workflow → `IMAGE_NAME` + the version read from `pyproject.toml` |
+| Image `docker.io/yawgyamfiprem32/k8s-troubleshoot-mcp:<version>` | `server.json` → `packages[0].identifier`; workflow → `IMAGE_NAME` + the version read from `pyproject.toml` |
 
 The version appears in `pyproject.toml` (source of truth), `server.json`'s
 `version` **and** its pinned image tag. CI asserts the tag matches the version
@@ -65,7 +82,7 @@ that one by eye.
 
    ```bash
    docker buildx imagetools inspect \
-     nanagyamfiprempeh30/k8s-troubleshoot-mcp:1.0.0 --format '{{ json .Manifest }}' \
+     yawgyamfiprem32/k8s-troubleshoot-mcp:1.0.0 --format '{{ json .Manifest }}' \
      | grep io.modelcontextprotocol.server.name
    ```
 
@@ -95,10 +112,10 @@ The image is the thing operators point a cluster credential at, so it is worth
 one direct check rather than trusting the build log:
 
 ```bash
-docker run --rm nanagyamfiprempeh30/k8s-troubleshoot-mcp:1.0.0; echo "exit=$?"
+docker run --rm yawgyamfiprem32/k8s-troubleshoot-mcp:1.0.0; echo "exit=$?"
 # expect: exit=1, a one-line KUBECONFIG diagnosis on stderr, nothing on stdout
 
-docker run --rm --entrypoint id nanagyamfiprempeh30/k8s-troubleshoot-mcp:1.0.0 -u
+docker run --rm --entrypoint id yawgyamfiprem32/k8s-troubleshoot-mcp:1.0.0 -u
 # expect: 10001
 ```
 

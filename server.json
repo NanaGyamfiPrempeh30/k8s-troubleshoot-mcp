@@ -12,7 +12,7 @@
   "packages": [
     {
       "registryType": "oci",
-      "identifier": "docker.io/nanagyamfiprempeh30/k8s-troubleshoot-mcp:1.0.0",
+      "identifier": "docker.io/yawgyamfiprem32/k8s-troubleshoot-mcp:1.0.0",
       "runtimeHint": "docker",
       "transport": {
         "type": "stdio"
