@@ -53,6 +53,17 @@ that `kubectl auth can-i get secrets` returns `no`, and aborts if it does not.
 - Generated kubeconfigs are written with `umask 077` via a temporary file and
   `chmod 600`. The script warns if the output path is inside the repository and
   not covered by `.gitignore`.
+- **Startup errors never quote the kubeconfig's contents.** A file that exists
+  and is readable but is malformed is reported as a single line naming the path
+  and the parser's reason, never the offending source line (REQ-002a).
+  Including the reason at all was only made safe by first establishing that
+  PyYAML omits its source snippet when reading from a file handle —
+  `MarkedYAMLError` *can* carry one, and in a kubeconfig the offending line may
+  be the bearer token.
+  `tests/unit/test_main.py::TestReq002aMalformedKubeconfig::test_message_never_quotes_the_file`
+  plants a JWT-shaped secret on the malformed line across five malformation
+  types and asserts it is absent from stderr, so a library change that starts
+  quoting lines fails the build instead of leaking a credential.
 
 ### Namespace controls (defense-in-depth, not a boundary)
 
@@ -92,6 +103,34 @@ Two test properties enforce this and cover different failure modes: **P17**
 poisons every field of every object a tool reads and fails if anything
 unescaped reaches the response; **P18** omits every optional field and fails if
 a tool raises instead of returning a structured response.
+
+### What a green escaping suite does not prove
+
+P17 is treated as evidence for one property, not as proof of correctness. It has
+two known blind spots and both have produced real defects in this repository:
+
+- **Omission.** A field the response model leaves out emits no poison and so
+  passes silently — P17 cannot distinguish "escaped correctly" from "never
+  included". This is why every deliberate exclusion carries a comment at the
+  point of omission in code, naming the REQ that excludes it. The two mechanisms
+  do not substitute for each other.
+- **Faithful-looking corruption.** `get_pod_logs` once returned `str(bytes)`
+  rather than decoded text. P17 passed both before and after the fix, because
+  `str()` backslash-escapes control characters — nothing raw reached the
+  response. The corruption itself is what made the property pass.
+
+P17's first run also found four fields reaching responses unescaped that had
+each been assumed to carry a control-plane-authored enum, and do not: container
+termination reasons (written by the CRI runtime), event `reason` and `type`
+(written by any controller in the cluster, including third-party operators), and
+`kubelet_version` (self-reported by the node). REQ-021a, REQ-030a and REQ-035a
+record why each is not enum-safe. A `reason` field is judged low-risk **per
+tool, never globally** — a provisioner- or CRD-authored `reason` carries none of
+the guarantees a core controller's does.
+
+The `not_yet_escaped` allowlist category exists so a gap can be recorded, but
+the design treats any entry in it as a stop-ship signal rather than a steady
+state, and a test enforces that. There are currently no entries.
 
 ### What this does not protect against
 
@@ -163,3 +202,43 @@ normal deployment, and needs no capabilities beyond the default set.
   API server response can trigger (REQ-003a).
 - The server reads `KUBECONFIG` once at startup and never re-reads it. Rotating
   the credential requires restarting the process.
+
+## How the claims in this document were verified
+
+The controls above are asserted here and enforced in code, but neither of those
+is evidence they work. Each was checked against something that could contradict
+it, and `DEBUG_LOG.md` records every error found in the process — root cause and
+resolution — including errors made while drafting this document.
+
+- **Against a live cluster, not against mocks.** Five defects were found only by
+  running against a real API server or a schema-driven fake, and every one had a
+  passing test asserting the opposite. The recurring cause is that the mocks
+  agreed with each other rather than with the cluster: a `MagicMock` never
+  invokes the generated model setters, so a test built on one can assert a
+  response shape the real client cannot produce. One of these bypassed the
+  no-exceptions-to-the-MCP-layer rule entirely, raising inside the client library
+  during deserialization before any tool code ran. Where a defect of this class
+  was fixed, the wrong shape was **removed** from the suite rather than
+  supplemented with a correct case.
+- **Against the API server's real behaviour.** RBAC provisioning was checked
+  with `kubectl --dry-run=server`, which runs real defaulting and admission
+  without persisting. That is how a blanket `kubectl apply -f kubernetes/` was
+  found to report success while creating no RoleBinding at all, leaving a server
+  that looks provisioned and can read nothing. The startup error message had
+  been instructing operators to run exactly that command.
+- **Against the source list, mechanically.** The exclusion table above was
+  cross-checked entry by entry against section 3 of `requirements.md`, which
+  found `get_replicaset_status` missing. The omission was invisible on a
+  read-through because the document was internally coherent without it.
+- **Against vacuous passes.** Each spec-text contract test was confirmed to fail
+  under three perturbations: rewording the requirement, weakening the message in
+  code, and breaking the test's own regex. A test that cannot fail is not a
+  control. One test here would have started passing for the wrong reason after a
+  refactor moved its output to a different stream — it asserted stderr was
+  empty, and stderr had become unconditionally empty. It was caught and
+  re-anchored.
+
+Reviewers are encouraged to read `DEBUG_LOG.md` alongside this file. The near
+miss most relevant to a security review is Issue #17: a cluster bearer token
+that a plausible implementation of the malformed-kubeconfig error path would
+have written to stderr.

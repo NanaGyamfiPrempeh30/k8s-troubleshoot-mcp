@@ -4,7 +4,7 @@ Tracks every error encountered, root cause, and resolution.
 
 A recurring theme runs through most of what follows, and is worth stating once
 at the top: **the test mocks agreed with each other rather than with the
-cluster.** Issues #10, #12, #13, #16 and #21 are all the same failure — a
+cluster.** Issues #10, #11, #12, #13 and #16 are all the same failure — a
 hand-written mock asserting a response shape the real Kubernetes client never
 produces — and each was found by a live cluster or a schema-driven fake, never
 by the suite as written. Where a bug of that class was fixed, the *wrong shape

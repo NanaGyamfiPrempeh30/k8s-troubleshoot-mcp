@@ -1,0 +1,68 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.nanagyamfiprempeh30/k8s-troubleshoot-mcp",
+  "title": "Kubernetes Troubleshoot",
+  "description": "Read-only Kubernetes diagnostics: pods, logs, events, workloads, services, PVCs and nodes.",
+  "version": "1.0.0",
+  "repository": {
+    "url": "https://github.com/NanaGyamfiPrempeh30/k8s-troubleshoot-mcp",
+    "source": "github"
+  },
+  "websiteUrl": "https://github.com/NanaGyamfiPrempeh30/k8s-troubleshoot-mcp#readme",
+  "packages": [
+    {
+      "registryType": "oci",
+      "identifier": "docker.io/nanagyamfiprempeh30/k8s-troubleshoot-mcp:1.0.0",
+      "runtimeHint": "docker",
+      "transport": {
+        "type": "stdio"
+      },
+      "runtimeArguments": [
+        {
+          "type": "named",
+          "name": "--mount",
+          "description": "Mount the kubeconfig read-only. This server performs no writes of any kind, so a writable mount would grant privilege it has no use for.",
+          "value": "type=bind,src={kubeconfig_path},dst=/kubeconfig,readonly",
+          "isRequired": true,
+          "variables": {
+            "kubeconfig_path": {
+              "description": "Absolute path on the host to a kubeconfig scoped to the diagnostic ServiceAccount. Generate it with scripts/generate-kubeconfig.sh — do not mount an admin kubeconfig. The file must be readable by UID 10001, which the container runs as.",
+              "format": "filepath",
+              "isRequired": true
+            }
+          }
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "KUBECONFIG",
+          "description": "Path to the kubeconfig inside the container. Must match the mount destination. There is no fallback to ~/.kube/config and no in-cluster config: a missing, unreadable or malformed file is a startup failure rather than a silent downgrade to an ambient credential.",
+          "isRequired": true,
+          "default": "/kubeconfig"
+        },
+        {
+          "name": "ALLOWED_NAMESPACES",
+          "description": "Comma-separated namespaces the server may read, e.g. staging,production. Wildcards (* and all) are rejected at startup, and kube-system and kube-public are stripped even if listed. This is defense-in-depth, not the security boundary — the boundary is the ServiceAccount's RBAC bindings.",
+          "isRequired": true,
+          "isSecret": false,
+          "format": "string"
+        },
+        {
+          "name": "LOG_LEVEL",
+          "description": "DEBUG, INFO, WARNING or ERROR. All logging goes to stderr; stdout carries the JSON-RPC stream exclusively.",
+          "default": "INFO"
+        },
+        {
+          "name": "API_TIMEOUT_SECONDS",
+          "description": "Kubernetes API request timeout. Must be a positive integer.",
+          "default": "30"
+        },
+        {
+          "name": "MAX_LOG_LINES",
+          "description": "Maximum log lines any single get_pod_logs call may return. Must be a positive integer; clamped to a hard ceiling of 1000 with a warning.",
+          "default": "200"
+        }
+      ]
+    }
+  ]
+}
