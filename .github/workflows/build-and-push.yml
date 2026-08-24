@@ -14,7 +14,13 @@ env:
   # comparing the image's io.modelcontextprotocol.server.name annotation to
   # this value, so a drift between Dockerfile and server.json is a failed
   # publish. The smoke-test job asserts all three agree.
-  MCP_SERVER_NAME: io.github.nanagyamfiprempeh30/k8s-troubleshoot-mcp
+  #
+  # Casing is significant, not cosmetic: the registry compares the annotation
+  # with `!=`, and the publish permission check matches the JWT's
+  # `io.github.<login>/*` pattern with a case-sensitive prefix test. The login
+  # GitHub reports is `NanaGyamfiPrempeh30`, so that is the only casing that
+  # authorizes a publish.
+  MCP_SERVER_NAME: io.github.NanaGyamfiPrempeh30/k8s-troubleshoot-mcp
 
 jobs:
   build-and-push:

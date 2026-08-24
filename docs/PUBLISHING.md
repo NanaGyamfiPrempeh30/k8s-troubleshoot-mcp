@@ -22,23 +22,49 @@ it is not a warning you can push past.
 
 ### MCP Registry
 
-Install the publisher CLI:
+Submission is a **CLI tool** — `mcp-publisher`. It is not a pull request to a
+registry repository, and you do not hand-write an API call. Install it with
+Homebrew, or fetch the release binary:
 
 ```bash
-# macOS / Linux
 brew install mcp-publisher
-# or download a release binary from
-# https://github.com/modelcontextprotocol/registry/releases
 ```
 
-The server name `io.github.nanagyamfiprempeh30/k8s-troubleshoot-mcp` claims the
-`io.github.nanagyamfiprempeh30` namespace, so publishing requires authenticating
-as that GitHub account. No other account can publish under it.
+```bash
+# macOS / Linux, no Homebrew
+curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" \
+  | tar xz mcp-publisher && sudo mv mcp-publisher /usr/local/bin/
+```
+
+Confirm it is on PATH — the subcommands are `init`, `login`, `logout`,
+`publish`:
+
+```bash
+mcp-publisher --help
+```
+
+`mcp-publisher init` generates a `server.json` template. **Do not run it here**
+— `server.json` already exists, is hand-written for the OCI package type, and
+is schema-validated in CI. `init` would overwrite it with an npm-shaped default.
+
+The server name `io.github.NanaGyamfiPrempeh30/k8s-troubleshoot-mcp` claims the
+`io.github.NanaGyamfiPrempeh30` namespace, so publishing requires authenticating
+as that GitHub account. No other account can publish under it — attempting it
+returns "You do not have permission to publish this server".
+
+**Match the login's casing exactly.** On login the registry mints a JWT
+granting `io.github.<login>/*`, where `<login>` is the login string the GitHub
+API returns — `NanaGyamfiPrempeh30`, not a lowercased form. The publish handler
+then tests `server.json`'s `name` against that pattern with a case-sensitive
+prefix match, so a lowercased name is schema-valid (the schema's pattern is
+`^[a-zA-Z0-9.-]+/[a-zA-Z0-9._-]+$`, which permits either) and still returns the
+same 403 as an unauthorized account. `scripts/check-namespaces.py` pins the
+canonical casing repo-wide for this reason.
 
 ## The identity chain
 
 > **Two different accounts, and they are not interchangeable.** The GitHub
-> handle is `nanagyamfiprempeh30`; the Docker Hub handle is `yawgyamfiprem32`.
+> handle is `NanaGyamfiPrempeh30`; the Docker Hub handle is `yawgyamfiprem32`.
 > The rule is mechanical: anything under `io.github.*` or a `github.com` URL
 > takes the **GitHub** handle, and anything under `docker.io/*` or naming a
 > Docker Hub repository path takes the **Docker Hub** handle. Substituting one
@@ -59,7 +85,7 @@ than the publish — but when you change one, change all of them:
 
 | Identity | Stated in |
 |----------|-----------|
-| Server name `io.github.nanagyamfiprempeh30/k8s-troubleshoot-mcp` | `server.json` → `name`; `Dockerfile` → `LABEL io.modelcontextprotocol.server.name`; workflow → `MCP_SERVER_NAME` |
+| Server name `io.github.NanaGyamfiPrempeh30/k8s-troubleshoot-mcp` | `server.json` → `name`; `Dockerfile` → `LABEL io.modelcontextprotocol.server.name`; workflow → `MCP_SERVER_NAME` |
 | Image `docker.io/yawgyamfiprem32/k8s-troubleshoot-mcp:<version>` | `server.json` → `packages[0].identifier`; workflow → `IMAGE_NAME` + the version read from `pyproject.toml` |
 
 The version appears in `pyproject.toml` (source of truth), `server.json`'s
@@ -86,25 +112,60 @@ that one by eye.
      | grep io.modelcontextprotocol.server.name
    ```
 
-5. Publish the registry listing:
+5. Authenticate. This is a **GitHub device flow and is interactive** — it
+   prints a code, you enter it in a browser. It cannot run unattended, which is
+   why this step is not in the workflow:
 
    ```bash
    mcp-publisher login github
+   ```
+
+   ```text
+   To authenticate, please:
+   1. Go to: https://github.com/login/device
+   2. Enter code: ABCD-1234
+   3. Authorize this application
+   ```
+
+6. Publish the listing, from the repository root so `server.json` is found:
+
+   ```bash
    mcp-publisher publish
    ```
 
-   It reads `server.json` from the working directory, pulls the image
-   annotation, and rejects the publish if it disagrees with `name`.
+   The registry hosts **metadata only, never artifacts**. It resolves the image
+   named in `packages[0].identifier`, reads its
+   `io.modelcontextprotocol.server.name` annotation, and rejects the publish if
+   that disagrees with `name` — which is why the Docker Hub push must already
+   have happened. A failure here reads
+   "Registry validation failed for package".
 
-6. Confirm the listing resolves:
+7. Confirm the listing resolves:
 
    ```bash
-   curl -s "https://registry.modelcontextprotocol.io/v0/servers?search=k8s-troubleshoot-mcp" | jq
+   curl -s "https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.NanaGyamfiPrempeh30/k8s-troubleshoot-mcp" | jq
    ```
 
-**mcp.so needs no separate submission** — it mirrors the official MCP Registry.
-Listings appear there after the registry publish propagates. Same for other
-downstream directories that consume the registry feed.
+## About mcp.so and other directories
+
+The official registry is explicitly designed as a source that sub-registries and
+directories consume, and it is open source so anyone can build a compatible one.
+That is the mechanism by which a listing propagates outward.
+
+**Whether mcp.so specifically auto-ingests from it, or wants its own submission,
+is not confirmed here** — the site blocks automated fetches, so this was not
+verified. Treat it as: publish to the official registry first, then check
+mcp.so after a few days, and submit manually there only if the listing has not
+appeared. Do not assume it is automatic.
+
+## Automating the registry publish
+
+There is an official GitHub Action for `mcp-publisher`, documented at
+<https://modelcontextprotocol.io/registry/github-actions>. It exists because the
+device flow above cannot run unattended. This repository does **not** use it —
+the registry publish is deliberately a manual step so that pushing an image and
+announcing it to the world stay separate decisions. Worth revisiting if releases
+become frequent.
 
 ## Verifying the published image is what you think it is
 

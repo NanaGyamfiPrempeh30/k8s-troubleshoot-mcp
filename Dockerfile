@@ -74,7 +74,11 @@ LABEL org.opencontainers.image.title="k8s-troubleshoot-mcp" \
 # against the `name` field in server.json and rejects the publish if they
 # differ — it is how the registry proves the image and the listing come from
 # the same owner, so the two must be edited together.
-LABEL io.modelcontextprotocol.server.name="io.github.nanagyamfiprempeh30/k8s-troubleshoot-mcp"
+#
+# The comparison is a plain `mcpName != serverName` string equality, so the
+# CASING here is load-bearing: it must match server.json byte-for-byte, and
+# both must carry the GitHub login's canonical casing (NanaGyamfiPrempeh30).
+LABEL io.modelcontextprotocol.server.name="io.github.NanaGyamfiPrempeh30/k8s-troubleshoot-mcp"
 
 # Non-root user with fixed UID (REQ-060), satisfying Kubernetes
 # runAsNonRoot / runAsUser policies without the cluster having to guess.

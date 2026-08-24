@@ -411,7 +411,7 @@ k8s-troubleshoot-mcp/
 ├── docs/
 │   ├── PUBLISHING.md            # Docker Hub + MCP Registry release runbook
 │   └── dockerhub-overview.md    # Docker Hub repository description
-├── server.json                  # MCP Registry listing (mcp.so mirrors it)
+├── server.json                  # MCP Registry listing metadata
 ├── src/k8s_troubleshoot_mcp/
 │   ├── __main__.py              # startup sequence, fail-closed
 │   ├── config.py                # env validation (REQ-001..010, 069..071)

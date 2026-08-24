@@ -1,6 +1,6 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.nanagyamfiprempeh30/k8s-troubleshoot-mcp",
+  "name": "io.github.NanaGyamfiPrempeh30/k8s-troubleshoot-mcp",
   "title": "Kubernetes Troubleshoot",
   "description": "Read-only Kubernetes diagnostics: pods, logs, events, workloads, services, PVCs and nodes.",
   "version": "1.0.0",
